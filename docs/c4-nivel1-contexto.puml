@@ -1,0 +1,17 @@
+@startuml c4-nivel1-contexto
+!include <C4/C4_Context>
+
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+
+title OficinaMecanica - Nivel 1: Contexto do Sistema
+
+Person(admin, "Administrador", "Responsavel pela oficina. Gerencia clientes, veiculos, pecas, servicos e ordens de servico via endpoints autenticados com JWT.")
+Person_Ext(cliente, "Cliente Final", "Proprietario do veiculo. Acompanha o status da OS e aprova o orcamento via links publicos, sem necessidade de conta.")
+
+System(oficina, "OficinaMecanica API", "Sistema backend para gestao de oficina mecanica. Controla o fluxo de Ordens de Servico, estoque de pecas, cadastro de clientes e veiculos.")
+
+Rel(admin, oficina, "Gerencia via", "HTTPS / REST / JWT Bearer")
+Rel(cliente, oficina, "Consulta status e aprova orcamento via", "HTTPS / REST (anonimo)")
+
+@enduml

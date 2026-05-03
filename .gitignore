@@ -1,0 +1,77 @@
+# Build
+bin/
+obj/
+out/
+publish/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+*.userosscache
+*.sln.docstates
+*.rsuser
+
+# Rider
+.idea/
+*.sln.iml
+
+# VS Code
+.vscode/
+!.vscode/extensions.json
+
+# Claude Code
+.claude/
+
+# NuGet
+*.nupkg
+*.snupkg
+packages/
+project.lock.json
+project.fragment.lock.json
+artifacts/
+
+# .NET
+project.assets.json
+*.csproj.nuget.*
+
+# Logs
+*.log
+logs/
+
+# Environment / secrets
+appsettings.Local.json
+appsettings.*.local.json
+.env
+.env.*
+!.env.example
+secrets.json
+
+# Docker
+docker-compose.override.yml
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Test results
+TestResults/
+coverage/
+*.trx
+*.coveragexml
+*.coverage
+
+# SonarQube
+.sonarqube/
+.sonar/
+*.opencover.xml
+
+# Entity Framework
+# (migrations are committed)
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*~

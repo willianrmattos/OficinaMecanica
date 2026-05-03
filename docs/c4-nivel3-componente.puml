@@ -1,0 +1,54 @@
+@startuml c4-nivel3-componente
+!include <C4/C4_Component>
+
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+
+title OficinaMecanica API - Nivel 3: Componente
+
+Person(admin, "Administrador", "Usuario autenticado")
+Person_Ext(cliente, "Cliente Final", "Acesso anonimo")
+ContainerDb_Ext(db, "OficinaMecanicaDb", "SQL Server 2022")
+
+Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
+
+    Component(middleware, "ExceptionHandlingMiddleware", "ASP.NET Core Middleware", "Captura DomainException (409), ValidationException (400) e excecoes genericas (500). Retorna ProblemDetails sem expor stack trace.")
+
+    Component(controllers, "Controllers REST", "ASP.NET Core [ApiController]", "AuthController, ClientesController, VeiculosController, ServicosController, PecasController, OrdensDeServicoController.")
+
+    Component(tokenSvc, "TokenService", "ITokenService / JWT", "Gera tokens JWT com HMAC-SHA256, issuer, audience e expiracao configurados via JwtSettings.")
+
+    Component(pipeline, "ValidationBehavior", "MediatR IPipelineBehavior", "Intercepta todo Command e Query. Executa FluentValidation e lanca ValidationException se invalido.")
+
+    Component(cmdHandlers, "Command Handlers", "MediatR IRequestHandler (escrita)", "CriarCliente, AtualizarCliente, RemoverCliente, CriarVeiculo, AtualizarVeiculo, RemoverVeiculo, CriarServico, AtualizarServico, DesativarServico, CriarPeca, AtualizarPeca, DesativarPeca, AdicionarEstoquePeca, CriarOrdemDeServico, AtualizarStatusOrdem, AprovarOrcamento.")
+
+    Component(qryHandlers, "Query Handlers", "MediatR IRequestHandler (leitura)", "ObterCliente, ListarClientes, ObterClientePorDocumento, ObterVeiculo, ListarVeiculos, ObterServico, ListarServicos, ObterPeca, ListarPecas, ObterOrdemDeServico, ListarOrdensDeServico, ObterTempoMedioServicos.")
+
+    Component(aggregates, "Agregados (DDD)", "Domain Entities / AggregateRoot", "Cliente, Veiculo, OrdemDeServico, Servico, Peca. Encapsulam invariantes e regras de negocio. Fluxo de status da OS controlado pelo dominio (Recebida ate Entregue). Baixa automatica de estoque ao aprovar orcamento.")
+
+    Component(valueObjects, "Value Objects", "Domain ValueObject", "Documento: valida CPF e CNPJ com algoritmo de digitos verificadores. Placa: valida formato antigo (ABC1234) e Mercosul (ABC1D23).")
+
+    Component(domainEvents, "Domain Events", "MediatR INotification", "OrdemDeServicoCriadaEvent, StatusOrdemAlteradoEvent, OrcamentoGeradoEvent, OrcamentoAprovadoEvent. Publicados pelo AppDbContext via IMediator apos SaveChangesAsync.")
+
+    Component(repos, "Repositories", "EF Core / IRepository", "ClienteRepository, VeiculoRepository, ServicoRepository, PecaRepository, OrdemDeServicoRepository. Implementam interfaces definidas no dominio.")
+
+    Component(dbctx, "AppDbContext / IUnitOfWork", "Entity Framework Core 8", "Configuracoes Fluent API com ConcurrencyToken. Gerencia transacoes ACID. Publica Domain Events via IMediator apos SaveChangesAsync.")
+}
+
+Rel_D(admin, middleware, "Requisicoes autenticadas (JWT Bearer)", "HTTPS")
+Rel_D(cliente, middleware, "Consulta OS e aprova orcamento", "HTTPS")
+Rel_D(middleware, controllers, "Repassa apos tratamento de erros")
+Rel(controllers, tokenSvc, "Solicita token JWT", "ITokenService")
+Rel_D(controllers, pipeline, "Despacha Command ou Query", "IMediator.Send")
+Rel_D(pipeline, cmdHandlers, "Encaminha apos validacao")
+Rel_D(pipeline, qryHandlers, "Encaminha apos validacao")
+Rel_R(cmdHandlers, aggregates, "Cria e manipula agregados")
+Rel(aggregates, valueObjects, "Usa para validacao")
+Rel(aggregates, domainEvents, "Registra eventos")
+Rel_D(cmdHandlers, repos, "Persiste via interfaces do dominio")
+Rel_D(qryHandlers, repos, "Consulta via interfaces do dominio")
+Rel_D(repos, dbctx, "Usa transacao compartilhada")
+Rel(dbctx, domainEvents, "Publica pos-SaveChanges", "IMediator.Publish")
+Rel_D(dbctx, db, "Le e escreve via EF Core", "SQL / TDS 1433")
+
+@enduml

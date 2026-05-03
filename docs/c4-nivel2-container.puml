@@ -1,0 +1,23 @@
+@startuml c4-nivel2-container
+!include <C4/C4_Container>
+
+LAYOUT_TOP_DOWN()
+LAYOUT_WITH_LEGEND()
+
+title OficinaMecanica - Nivel 2: Container
+
+Person(admin, "Administrador", "Usuario autenticado com JWT")
+Person_Ext(cliente, "Cliente Final", "Acesso anonimo a endpoints publicos")
+
+System_Boundary(oficina, "OficinaMecanica") {
+    Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. Valida entradas com FluentValidation. Emite logs via Serilog. Porta 5000.")
+    ContainerDb(db, "OficinaMecanicaDb", "SQL Server 2022", "Persiste clientes, veiculos, servicos, pecas, ordens de servico e historico de status. Concorrencia otimista com ConcurrencyToken. Porta 1433.")
+    Container(seq, "Seq", "datalust/seq:latest", "Agregacao e visualizacao de logs estruturados enviados pelo Serilog. Interface web para consulta e alertas. Porta 5341.")
+}
+
+Rel(admin, api, "Chama endpoints administrativos", "HTTPS / REST / JWT Bearer")
+Rel(cliente, api, "Consulta OS e aprova orcamento", "HTTPS / REST (anonimo)")
+Rel(api, db, "Le e escreve via EF Core", "TCP 1433 / TDS")
+Rel(api, seq, "Envia logs estruturados via Serilog sink", "HTTP")
+
+@enduml

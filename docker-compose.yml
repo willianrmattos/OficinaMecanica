@@ -1,0 +1,123 @@
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: oficinamecanica-db
+    environment:
+      SA_PASSWORD: "OficinaMecanica@2024"
+      ACCEPT_EULA: "Y"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "OficinaMecanica@2024" -C -Q "SELECT 1" || exit 1
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: oficinamecanica-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
+      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=OficinaMecanicaDb;User Id=sa;Password=OficinaMecanica@2024;TrustServerCertificate=True"
+      JwtSettings__SecretKey: "S3cur3K3y!OficinaMecanica@2024#Jwt$Token%Secret&Key"
+      JwtSettings__Issuer: "OficinaMecanica.API"
+      JwtSettings__Audience: "OficinaMecanica.Client"
+      JwtSettings__ExpiracaoMinutos: "60"
+      AdminCredentials__Usuario: "admin"
+      AdminCredentials__Senha: "Admin@123"
+      Seq__ServerUrl: "http://seq:80"
+    ports:
+      - "5000:8080"
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+
+  seq:
+    image: datalust/seq:latest
+    container_name: oficinamecanica-seq
+    environment:
+      ACCEPT_EULA: "Y"
+      SEQ_FIRSTRUN_ADMINPASSWORD: "Admin@123"
+    ports:
+      - "5341:80"
+    volumes:
+      - seq_data:/data
+
+  sonarqube:
+    image: sonarqube:10-community
+    container_name: oficinamecanica-sonar
+    depends_on:
+      sonarqube-db:
+        condition: service_healthy
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://sonarqube-db:5432/sonar
+      SONAR_JDBC_USERNAME: sonar
+      SONAR_JDBC_PASSWORD: sonar
+      SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
+    ports:
+      - "9000:9000"
+    volumes:
+      - sonarqube_data:/opt/sonarqube/data
+      - sonarqube_extensions:/opt/sonarqube/extensions
+      - sonarqube_logs:/opt/sonarqube/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9000/api/system/status | grep -q '\"status\":\"UP\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 60s
+
+  sonarqube-db:
+    image: postgres:15
+    container_name: oficinamecanica-sonar-db
+    environment:
+      POSTGRES_USER: sonar
+      POSTGRES_PASSWORD: sonar
+      POSTGRES_DB: sonar
+    volumes:
+      - sonarqube_db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U sonar"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  sonar-setup:
+    image: alpine:3.19
+    container_name: oficinamecanica-sonar-setup
+    depends_on:
+      sonarqube:
+        condition: service_healthy
+    restart: "no"
+    command:
+      - /bin/sh
+      - -c
+      - |
+        apk add --no-cache curl > /dev/null 2>&1
+
+        echo "==> Configurando SonarQube..."
+
+        # Troca de senha (ignorado se ja alterada)
+        curl -s -u admin:admin -X POST "http://sonarqube:9000/api/users/change_password" \
+          -d "login=admin&previousPassword=admin&password=Admin@Sonar2024" > /dev/null 2>&1 || true
+
+        # Criacao do projeto (idempotente)
+        curl -s -u admin:Admin@Sonar2024 -X POST "http://sonarqube:9000/api/projects/create" \
+          -d "project=oficina-mecanica&name=OficinaMecanica&visibility=public" > /dev/null 2>&1 || true
+
+        echo "==> SonarQube pronto!"
+        echo "    Dashboard: http://localhost:9000/dashboard?id=oficina-mecanica"
+        echo "    Login: admin / Admin@Sonar2024"
+
+volumes:
+  sqlserver_data:
+  seq_data:
+  sonarqube_data:
+  sonarqube_extensions:
+  sonarqube_logs:
+  sonarqube_db:
