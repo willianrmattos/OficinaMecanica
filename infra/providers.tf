@@ -2,6 +2,12 @@ provider "azurerm" {
   features {}
 }
 
+# Nao precisei de configuracao adicional aqui: usa a mesma sessao autenticada
+# do az CLI que o provider azurerm. Gerencia recursos de Azure AD (App
+# Registration, Service Principal, Federated Identity Credential do modulo
+# github_oidc).
+provider "azuread" {}
+
 # Configurei o provider a partir dos outputs do modulo aks (cluster ja
 # existente no state) - requer que o aksfiap ja tenha sido criado
 # previamente. Criar o cluster e instalar um helm_release na mesma execucao

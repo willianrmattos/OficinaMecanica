@@ -1,0 +1,15 @@
+variable "app_display_name" {
+  description = "Nome de exibicao da App Registration usada pelo GitHub Actions."
+  type        = string
+  default     = "github-actions-oficinamecanica"
+}
+
+variable "github_repo" {
+  description = "Repositorio GitHub no formato 'owner/repo', usado para restringir a Federated Identity Credential a esse repositorio especifico."
+  type        = string
+}
+
+variable "acr_id" {
+  description = "ID do Container Registry (modulo infra/acr), usado para dar permissao de push ao Service Principal do GitHub Actions."
+  type        = string
+}

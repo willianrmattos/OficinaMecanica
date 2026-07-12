@@ -1,3 +1,5 @@
+data "azurerm_client_config" "current" {}
+
 module "rg" {
   source = "./rg"
 
@@ -65,4 +67,11 @@ module "sqldb" {
   administrator_login_password = var.sql_administrator_login_password
   client_ip_address            = var.sql_client_ip_address
   tags                         = var.tags
+}
+
+module "github_oidc" {
+  source = "./github_oidc"
+
+  github_repo = var.github_repo
+  acr_id      = module.acr.registry_id
 }

@@ -28,6 +28,16 @@ resource "azurerm_kubernetes_cluster" "this" {
     vm_size    = var.node_vm_size
     node_count = var.node_count
     max_pods   = 110
+
+    # Declarei explicitamente os mesmos valores que o Azure ja aplica por
+    # conta propria quando esse bloco nao e informado - sem isso, todo
+    # "terraform plan" mostra um diff fantasma tentando remover um bloco que
+    # o proprio Azure recoloca de qualquer forma.
+    upgrade_settings {
+      max_surge                     = "10%"
+      drain_timeout_in_minutes      = 0
+      node_soak_duration_in_minutes = 0
+    }
   }
 
   # Deixei sem vnet_subnet_id: usei Azure CNI Overlay sem "bring your own

@@ -74,3 +74,18 @@ output "sql_database_name" {
   value       = module.sqldb.database_name
 }
 
+output "github_actions_client_id" {
+  description = "Client ID da App Registration do GitHub Actions - configurar como variavel AZURE_CLIENT_ID no repositorio (gh variable set)."
+  value       = module.github_oidc.client_id
+}
+
+output "azure_tenant_id" {
+  description = "Tenant ID da assinatura Azure atual - configurar como variavel AZURE_TENANT_ID no repositorio."
+  value       = data.azurerm_client_config.current.tenant_id
+}
+
+output "azure_subscription_id" {
+  description = "Subscription ID da assinatura Azure atual - configurar como variavel AZURE_SUBSCRIPTION_ID no repositorio."
+  value       = data.azurerm_client_config.current.subscription_id
+}
+

@@ -88,6 +88,12 @@ variable "sql_client_ip_address" {
   default     = null
 }
 
+variable "github_repo" {
+  description = "Repositorio GitHub no formato 'owner/repo' (modulo github_oidc), usado para restringir a Federated Identity Credential do GitHub Actions a esse repositorio especifico."
+  type        = string
+  default     = "willianrmattos/OficinaMecanica"
+}
+
 variable "tags" {
   description = "Tags aplicadas a todos os recursos."
   type        = map(string)
