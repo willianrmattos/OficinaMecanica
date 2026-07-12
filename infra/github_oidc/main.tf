@@ -40,3 +40,18 @@ resource "azurerm_role_assignment" "aks_cluster_admin" {
   principal_id                     = azuread_service_principal.github_actions.object_id
   skip_service_principal_aad_check = true
 }
+
+# Adicionei essa role porque o job deploy-to-aks (.github/workflows/ci.yml)
+# precisa chamar "az aks update" pra liberar temporariamente o IP do runner
+# no authorized_ip_ranges do API server - sem isso o runner nem alcanca o
+# cluster, ja que o API server publico fica restrito por IP
+# (infra/terraform.tfvars). Escolhi esse role especifico porque ele so
+# gerencia o recurso ARM do cluster (config, escala, etc.), diferente do
+# "Cluster Admin Role" acima, que so controla quem busca o kubeconfig -
+# nenhum dos dois concede RBAC nativo dentro do Kubernetes.
+resource "azurerm_role_assignment" "aks_contributor" {
+  scope                            = var.aks_id
+  role_definition_name             = "Azure Kubernetes Service Contributor Role"
+  principal_id                     = azuread_service_principal.github_actions.object_id
+  skip_service_principal_aad_check = true
+}

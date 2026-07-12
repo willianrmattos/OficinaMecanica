@@ -132,6 +132,21 @@ jobs:
           cluster-name: aksfiap
           admin: true
 
+      # O API server do AKS tem authorized_ip_ranges restrito ao IP de casa
+      # (infra/terraform.tfvars) - o runner do GitHub Actions usa um IP
+      # dinamico e efemero, fora dessa lista, e sem isso o "kubectl apply"
+      # abaixo nem alcanca o cluster (timeout de rede). Libero
+      # temporariamente o IP deste runner, guardando a lista original em
+      # AKS_ORIGINAL_IP_RANGES pra restaurar no final do job. Exige a role
+      # "Azure Kubernetes Service Contributor Role" (infra/github_oidc/main.tf)
+      # no Service Principal do GitHub Actions.
+      - name: Libera IP do runner no API server do AKS
+        run: |
+          CURRENT_RANGES=$(az aks show --resource-group rgfiap --name aksfiap --query "join(',', apiServerAccessProfile.authorizedIpRanges)" -o tsv)
+          echo "AKS_ORIGINAL_IP_RANGES=$CURRENT_RANGES" >> "$GITHUB_ENV"
+          RUNNER_IP=$(curl -s https://ifconfig.me)
+          az aks update --resource-group rgfiap --name aksfiap --api-server-authorized-ip-ranges "${CURRENT_RANGES},${RUNNER_IP}/32"
+
       - name: Apply manifests
         run: |
           kubectl apply -f k8s/oficinamecanica-api/
@@ -146,3 +161,12 @@ jobs:
         run: |
           kubectl set image deployment/oficinamecanica-api api=acrfiap.azurecr.io/oficinamecanica-api:${{ github.sha }}
           kubectl rollout status deployment/oficinamecanica-api --timeout=180s
+
+      # Roda mesmo se um passo anterior falhar (if: always()) - sem isso, o
+      # IP efemero do runner ficaria liberado no firewall do API server
+      # indefinidamente, ate a proxima execucao do workflow sobrescrever de
+      # novo.
+      - name: Restaura authorized IP ranges do AKS
+        if: always()
+        run: |
+          az aks update --resource-group rgfiap --name aksfiap --api-server-authorized-ip-ranges "${{ env.AKS_ORIGINAL_IP_RANGES }}"

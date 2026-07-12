@@ -275,10 +275,12 @@ na raiz (ver `## Infraestrutura`).
    `docker/build-push-action` (cache de camadas `type=gha`).
 3. **`deploy-to-aks`**: idem (só push na `main`). Autentica via
    `azure/aks-set-context@v4` (`admin: true`, usa contas locais do cluster,
-   nao Azure RBAC de autorizacao dentro do Kubernetes), aplica
-   `k8s/oficinamecanica-api/` e `k8s/monitoring/`, e usa `kubectl set image`
+   nao Azure RBAC de autorizacao dentro do Kubernetes), libera o IP efemero
+   do runner no `authorized_ip_ranges` do API server (ver abaixo), aplica
+   `k8s/oficinamecanica-api/` e `k8s/monitoring/`, usa `kubectl set image`
    apontando pro hash do commit (nao o `:latest` fixo do YAML) + `kubectl
-   rollout status` pra confirmar.
+   rollout status` pra confirmar, e por fim restaura o `authorized_ip_ranges`
+   original (`if: always()`, roda mesmo se um passo anterior falhar).
 
 Autenticacao via **OIDC** (`infra/github_oidc/`) — o GitHub emite um token de
 identidade por execucao, sem nenhum secret de longa duracao guardado no
@@ -287,9 +289,21 @@ repositorio. As 3 variables do repositorio (`AZURE_CLIENT_ID`,
 set`, nao sao secrets — sozinhas nao dao acesso a nada sem o token OIDC) vem
 dos outputs do modulo (`terraform output`).
 
-**Limitacao conhecida**: o `deploy-to-aks` falha se o cluster estiver parado
-(`az aks stop`, usado pra nao gerar custo ocioso) — decisao consciente de
-manter automatico mesmo assim, em vez de gatilho manual.
+**API server com IP restrito** (`infra/terraform.tfvars`,
+`aks_authorized_ip_ranges`): o cluster trava o API server publico so pro IP
+de casa, o que bloquearia o runner do GitHub Actions (IP dinamico, fora da
+lista) — descoberto na pratica via timeout de rede no `kubectl apply`. O job
+`deploy-to-aks` contorna isso sozinho: le a lista atual (`az aks show`),
+adiciona o IP do proprio runner (`az aks update`), faz o deploy, e restaura a
+lista original no fim do job. Exige a role `Azure Kubernetes Service
+Contributor Role` (`infra/github_oidc/main.tf`) no Service Principal, alem da
+`Cluster Admin Role` ja usada pra buscar o kubeconfig. Cada `az aks update`
+leva alguns minutos pra propagar — o job fica mais lento, mas nao precisa de
+gatilho manual nem de deixar o API server sem trava de IP permanentemente.
+
+**Limitacao conhecida**: o `deploy-to-aks` ainda falha se o cluster estiver
+parado (`az aks stop`, usado pra nao gerar custo ocioso) — decisao consciente
+de manter automatico mesmo assim, em vez de gatilho manual.
 
 Analise SonarQube **nao** esta no pipeline ainda: o SonarQube atual só roda
 localmente (`localhost:9000`, dentro do Docker), inalcancavel pelo runner do
