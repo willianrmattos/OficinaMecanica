@@ -374,13 +374,17 @@ ser confundidos:
 ## CI/CD
 
 O fluxo de deploy e automatizado via GitHub Actions
-([.github/workflows/ci.yml](.github/workflows/ci.yml)), em 3 jobs sequenciais:
+([.github/workflows/ci.yml](.github/workflows/ci.yml)), em 3 jobs sequenciais.
+Roda automaticamente em todo push/PR pra `main`, ou sob demanda a qualquer
+momento pelo botao **Run workflow** na aba *Actions* do GitHub
+(`workflow_dispatch`) — util, por exemplo, pra re-testar o deploy depois de
+um `terraform apply` que nao mexeu em codigo da aplicacao:
 
 ```
-push/PR na main
+push/PR na main OU disparo manual (Run workflow)
   -> 1. build-and-test        (restore + build Release + testes Domain/Application/Integration)
        |
-       | (so segue daqui em push direto na main, nao em PR)
+       | (so segue daqui em push direto na main ou disparo manual, nao em PR)
        v
      2. build-and-push-image  (login no Azure via OIDC, build da imagem, push pro ACR
        |                       com as tags <sha-do-commit> e latest)
@@ -391,9 +395,9 @@ push/PR na main
 
 | Job | Quando roda | O que faz |
 |-----|-------------|-----------|
-| `build-and-test` | Todo push ou PR pra `main` | Restore, build, os 3 projetos de teste, publica resultados como Job Summary (`dorny/test-reporter`) e artifact |
-| `build-and-push-image` | So em push direto na `main` | Autentica no Azure (OIDC), publica a imagem no `acrfiap.azurecr.io` com a tag do commit (`github.sha`) e `latest` |
-| `deploy-to-aks` | So em push direto na `main`, apos o job anterior | Aplica os manifests de `k8s/` e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
+| `build-and-test` | Todo push, PR ou disparo manual | Restore, build, os 3 projetos de teste, publica resultados como Job Summary (`dorny/test-reporter`) e artifact |
+| `build-and-push-image` | So em push direto na `main` ou disparo manual (nao em PR) | Autentica no Azure (OIDC), publica a imagem no `acrfiap.azurecr.io` com a tag do commit (`github.sha`) e `latest` |
+| `deploy-to-aks` | Idem, apos o job anterior | Aplica os manifests de `k8s/` e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
 
 **Autenticacao sem secrets de longa duracao**: os jobs 2 e 3 autenticam no
 Azure via **OIDC** (`infra/github_oidc/`) — o GitHub emite um token de

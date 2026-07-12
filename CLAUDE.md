@@ -262,18 +262,22 @@ na raiz (ver `## Infraestrutura`).
 
 ## CI/CD
 
-`.github/workflows/ci.yml`, 3 jobs sequenciais (`needs:`):
+`.github/workflows/ci.yml`, 3 jobs sequenciais (`needs:`). Gatilhos:
+`push`/`pull_request` pra `main` (automatico) e `workflow_dispatch` (botao
+"Run workflow" na aba Actions do GitHub, pra rodar sob demanda sem precisar
+de um commit novo — util por exemplo depois de um `terraform apply` que nao
+mexeu em codigo da aplicacao).
 
 1. **`build-and-test`**: roda em todo push/PR pra `main`. Restore, build
    (Release), os 3 projetos de teste (`dotnet test`, cache de pacotes NuGet),
    resultados publicados como Job Summary via `dorny/test-reporter`
    (`.trx`) e como artifact (`test-results`, retencao de 90 dias).
-2. **`build-and-push-image`**: só em push de verdade na `main` (nao em PR).
-   Autentica no Azure via `azure/login@v2` (OIDC — ver `infra/github_oidc/`),
-   `az acr login`, e publica a imagem no `acrfiap` com 2 tags:
-   `${{ github.sha }}` (hash do commit) e `latest`, via
-   `docker/build-push-action` (cache de camadas `type=gha`).
-3. **`deploy-to-aks`**: idem (só push na `main`). Autentica via
+2. **`build-and-push-image`**: só em push de verdade na `main` ou
+   `workflow_dispatch` (nao em PR). Autentica no Azure via `azure/login@v2`
+   (OIDC — ver `infra/github_oidc/`), `az acr login`, e publica a imagem no
+   `acrfiap` com 2 tags: `${{ github.sha }}` (hash do commit) e `latest`,
+   via `docker/build-push-action` (cache de camadas `type=gha`).
+3. **`deploy-to-aks`**: idem (push ou `workflow_dispatch` na `main`). Autentica via
    `azure/aks-set-context@v4` (`admin: true`, usa contas locais do cluster,
    nao Azure RBAC de autorizacao dentro do Kubernetes), aplica
    `k8s/oficinamecanica-api/` e `k8s/monitoring/`, e usa `kubectl set image`
