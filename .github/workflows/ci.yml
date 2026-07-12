@@ -1,0 +1,66 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  checks: write
+
+jobs:
+  build-and-test:
+    name: Build & Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 8
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+
+      - name: Cache NuGet packages
+        uses: actions/cache@v4
+        with:
+          path: ~/.nuget/packages
+          key: ${{ runner.os }}-nuget-${{ hashFiles('**/*.csproj') }}
+          restore-keys: |
+            ${{ runner.os }}-nuget-
+
+      - name: Restore
+        run: dotnet restore OficinaMecanica.sln
+
+      - name: Build
+        run: dotnet build OficinaMecanica.sln --no-restore --configuration Release
+
+      - name: Test - Domain
+        run: dotnet test tests/OficinaMecanica.Domain.Tests --no-build --no-restore --configuration Release --logger "trx;LogFileName=domain-tests.trx" --results-directory TestResults
+
+      - name: Test - Application
+        run: dotnet test tests/OficinaMecanica.Application.Tests --no-build --no-restore --configuration Release --logger "trx;LogFileName=application-tests.trx" --results-directory TestResults
+
+      - name: Test - Integration
+        run: dotnet test tests/OficinaMecanica.Integration.Tests --no-build --no-restore --configuration Release --logger "trx;LogFileName=integration-tests.trx" --results-directory TestResults
+
+      - name: Publish test results
+        uses: dorny/test-reporter@v1
+        if: always()
+        with:
+          name: Resultados dos Testes
+          path: "TestResults/*.trx"
+          reporter: dotnet-trx
+
+      - name: Upload test result artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: TestResults/
