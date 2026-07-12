@@ -1,52 +1,22 @@
 services:
-  sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: oficinamecanica-db
-    environment:
-      SA_PASSWORD: "OficinaMecanica@2024"
-      ACCEPT_EULA: "Y"
-    ports:
-      - "1433:1433"
-    volumes:
-      - sqlserver_data:/var/opt/mssql
-    healthcheck:
-      test: /opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P "OficinaMecanica@2024" -C -Q "SELECT 1" || exit 1
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   api:
     build:
       context: .
       dockerfile: Dockerfile
+    image: oficinamecanica-api:latest
     container_name: oficinamecanica-api
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
-      ConnectionStrings__DefaultConnection: "Server=sqlserver,1433;Database=OficinaMecanicaDb;User Id=sa;Password=OficinaMecanica@2024;TrustServerCertificate=True"
-      JwtSettings__SecretKey: "S3cur3K3y!OficinaMecanica@2024#Jwt$Token%Secret&Key"
+      ConnectionStrings__DefaultConnection: "${SQL_CONNECTION_STRING}"
+      JwtSettings__SecretKey: "S3cur3K3y!OficinaMecanica@2024#Jwt$$Token%Secret&Key"
       JwtSettings__Issuer: "OficinaMecanica.API"
       JwtSettings__Audience: "OficinaMecanica.Client"
       JwtSettings__ExpiracaoMinutos: "60"
       AdminCredentials__Usuario: "admin"
       AdminCredentials__Senha: "Admin@123"
-      Seq__ServerUrl: "http://seq:80"
     ports:
       - "5000:8080"
-    depends_on:
-      sqlserver:
-        condition: service_healthy
-
-  seq:
-    image: datalust/seq:latest
-    container_name: oficinamecanica-seq
-    environment:
-      ACCEPT_EULA: "Y"
-      SEQ_FIRSTRUN_ADMINPASSWORD: "Admin@123"
-    ports:
-      - "5341:80"
-    volumes:
-      - seq_data:/data
 
   sonarqube:
     image: sonarqube:10-community
@@ -87,6 +57,24 @@ services:
       timeout: 5s
       retries: 5
 
+  trivy:
+    image: aquasec/trivy:latest
+    container_name: oficinamecanica-trivy
+    profiles: ["security"]
+    volumes:
+      - //var/run/docker.sock:/var/run/docker.sock
+      - trivy_cache:/root/.cache/trivy
+      - ./docs:/reports
+    command: >
+      image
+      --format json
+      --output /reports/trivy-report-raw.json
+      --severity CRITICAL,HIGH,MEDIUM
+      oficinamecanica-api:latest
+    depends_on:
+      - api
+    restart: "no"
+
   sonar-setup:
     image: alpine:3.19
     container_name: oficinamecanica-sonar-setup
@@ -115,9 +103,8 @@ services:
         echo "    Login: admin / Admin@Sonar2024"
 
 volumes:
-  sqlserver_data:
-  seq_data:
   sonarqube_data:
   sonarqube_extensions:
   sonarqube_logs:
   sonarqube_db:
+  trivy_cache:

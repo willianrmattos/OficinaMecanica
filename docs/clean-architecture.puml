@@ -1,0 +1,36 @@
+@startuml clean-architecture
+title OficinaMecanica - Clean Architecture
+
+skinparam defaultFontName Arial
+skinparam defaultFontSize 11
+skinparam defaultTextAlignment center
+
+skinparam rectangle {
+    RoundCorner     8
+    BorderColor     #888888
+    BorderThickness 1
+    FontSize        12
+    FontStyle       bold
+}
+
+skinparam ArrowColor     #555555
+skinparam ArrowFontColor #555555
+skinparam ArrowFontSize  10
+
+rectangle "Interface Adapters - API\n\nClientesController  VeiculosController  ServicosController\nPecasController  OrdensDeServicoController  AuthController\nExceptionHandlingMiddleware  Program.cs" as api #BBDEFB
+
+rectangle "Use Cases - Application\n\nCommands + Handlers: CriarCliente, AtualizarCliente, CriarOrdemDeServico, AprovarOrcamento ...\nQueries + Handlers: ObterCliente, ListarClientes, ObterOrdemDeServico, ObterTempoMedio ...\nValidators (FluentValidation)  ValidationBehavior (MediatR Pipeline)  DTOs" as app #FFCDD2
+
+rectangle "Entities - Domain\n\nAggregates: Cliente  OrdemDeServico  Servico  Peca\nEntities: Veiculo  ItemServico  ItemPeca  HistoricoStatus\nValue Objects: Documento (CPF/CNPJ)  Placa\nDomain Events  DomainException  Interfaces: IRepository  IUnitOfWork  ITokenService" as dom #FFF9C4
+
+rectangle "Interface Adapters - Infrastructure\n\nAppDbContext (IUnitOfWork)  ClienteRepository  VeiculoRepository\nServicoRepository  PecaRepository  OrdemDeServicoRepository\nEF Configurations (Fluent API)  Migrations  TokenService (JWT)" as infra #BBDEFB
+
+rectangle "Frameworks and Drivers\n\nSQL Server 2022  ASP.NET Core 8  EF Core 8  MediatR  FluentValidation\nSerilog  Docker  xUnit  Moq  FluentAssertions  Bogus" as fw #C8E6C9
+
+api   -down->   app   : IMediator.Send()
+api   ..>         infra : DI (Program.cs)
+app   -down->   dom   : usa entidades e interfaces
+infra -up->     dom   : implementa IRepository\ne IUnitOfWork
+infra -down->   fw    : usa EF Core, JWT, Serilog
+
+@enduml

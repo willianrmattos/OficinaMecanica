@@ -1,0 +1,42 @@
+# O IP 130.213.20.130 deve ser atualizado para o IP publico atual do
+# ingress-nginx:
+#   kubectl get svc -n ingress-nginx ingress-nginx-controller
+# (o IP pode mudar se o Service for recriado). Utilizei o nip.io - um servico
+# de DNS publico que resolve "qualquer-coisa.<ip>.nip.io" para o proprio IP
+# embutido no nome - para dispensar um dominio real ou a edicao do arquivo
+# hosts local durante os testes.
+#
+# Coloquei Grafana e Prometheus no mesmo Ingress por pertencerem ao mesmo
+# dominio de responsabilidade (observabilidade, pasta k8s/monitoring/) -
+# diferente do Ingress da API (k8s/oficinamecanica-api/ingress.yaml), que
+# deixei separado por ter responsabilidade distinta. O nome do Service do
+# Prometheus pode variar conforme a versao do chart - conferir com
+# `kubectl get svc -n monitoring` antes de aplicar.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: monitoring
+  namespace: monitoring
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: grafana.130.213.20.130.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: monitoring-grafana
+                port:
+                  number: 80
+    - host: prometheus.130.213.20.130.nip.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: monitoring-kube-prometheus-prometheus
+                port:
+                  number: 9090

@@ -1,0 +1,68 @@
+module "rg" {
+  source = "./rg"
+
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  tags                = var.tags
+}
+
+module "storage" {
+  source = "./storage"
+
+  location             = module.rg.location
+  resource_group_name  = module.rg.resource_group_name
+  storage_account_name = var.storage_account_name
+  tags                 = var.tags
+}
+
+module "acr" {
+  source = "./acr"
+
+  location            = module.rg.location
+  resource_group_name = module.rg.resource_group_name
+  registry_name       = var.registry_name
+  tags                = var.tags
+}
+
+module "aks" {
+  source = "./aks"
+
+  location             = module.rg.location
+  resource_group_name  = module.rg.resource_group_name
+  cluster_name         = var.aks_cluster_name
+  acr_id               = module.acr.registry_id
+  key_vault_id         = module.keyvault.key_vault_id
+  authorized_ip_ranges = var.aks_authorized_ip_ranges
+  tags                 = var.tags
+}
+
+module "keyvault" {
+  source = "./keyvault"
+
+  location            = module.rg.location
+  resource_group_name = module.rg.resource_group_name
+  key_vault_name      = var.key_vault_name
+  client_ip_address   = var.key_vault_client_ip_address
+  tags                = var.tags
+}
+
+module "helm" {
+  source = "./helm"
+
+  storage_class_name = var.monitoring_storage_class_name
+
+  depends_on = [module.aks]
+}
+
+module "sqldb" {
+  source = "./sqldb"
+
+  location                     = var.sql_location
+  resource_group_name          = module.rg.resource_group_name
+  server_name                  = var.sql_server_name
+  database_name                = var.sql_database_name
+  administrator_login          = var.sql_administrator_login
+  administrator_login_password = var.sql_administrator_login_password
+  client_ip_address            = var.sql_client_ip_address
+  tags                         = var.tags
+}

@@ -1,0 +1,25 @@
+# Requer um Ingress Controller no cluster - ja instalado via Terraform
+# (infra/helm/main.tf, helm_release do ingress-nginx).
+#
+# Deixei sem "host" na regra abaixo de proposito: e uma regra catch-all, que
+# aceita qualquer hostname (ou nenhum) nao reivindicado por outra regra mais
+# especifica - por isso o IP publico do ingress-nginx roteia direto para a
+# API, sem necessidade de dominio. Ja em Grafana/Prometheus
+# (k8s/monitoring/ingress.yaml) usei host especifico porque os dois
+# compartilham o mesmo IP e precisam ser diferenciados.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: oficinamecanica-api
+spec:
+  ingressClassName: nginx
+  rules:
+    - http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: oficinamecanica-api
+                port:
+                  number: 80

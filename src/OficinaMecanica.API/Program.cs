@@ -4,6 +4,7 @@ using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.API.Middleware;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using Prometheus;
 using Serilog;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -13,7 +14,6 @@ Log.Logger = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
     .WriteTo.Console()
-    .WriteTo.Seq(builder.Configuration["Seq:ServerUrl"] ?? "http://localhost:5341")
     .CreateLogger();
 
 builder.Host.UseSerilog();
@@ -24,6 +24,7 @@ builder.Services.AddInfrastructure(builder.Configuration);
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
+builder.Services.AddHealthChecks();
 builder.Services.AddSwaggerGen(c =>
 {
     c.SwaggerDoc("v1", new OpenApiInfo
@@ -62,6 +63,7 @@ var app = builder.Build();
 
 // Middleware
 app.UseMiddleware<ExceptionHandlingMiddleware>();
+app.UseHttpMetrics();
 
 // Auto-migrate in development
 if (app.Environment.IsDevelopment())
@@ -85,6 +87,8 @@ app.UseAuthentication();
 app.UseAuthorization();
 
 app.MapControllers();
+app.MapMetrics();
+app.MapHealthChecks("/health");
 
 Log.Information("OficinaMecanica API iniciada com sucesso.");
 

@@ -10,13 +10,15 @@ Backend .NET 8 com DDD, Clean Architecture e CQRS (MediatR) para gestao de ofici
 src/
   OficinaMecanica.Domain/          # Entidades, Value Objects, Enums, Domain Events, Interfaces
   OficinaMecanica.Application/     # Commands, Queries, Handlers (MediatR), DTOs, Validators (FluentValidation)
-  OficinaMecanica.Infrastructure/  # EF Core (SQL Server), Repositories, JWT Auth, Token Service
+  OficinaMecanica.Infrastructure/  # EF Core (Azure SQL Database), Repositories, JWT Auth, Token Service
   OficinaMecanica.API/             # Controllers REST, ExceptionHandlingMiddleware, Swagger, Program.cs
 tests/
   OficinaMecanica.Domain.Tests/       # Testes unitarios (entidades, VOs, regras de negocio)
   OficinaMecanica.Application.Tests/  # Testes dos handlers e validators (Moq)
   OficinaMecanica.Integration.Tests/  # Testes de integracao (WebApplicationFactory + InMemory)
   OficinaMecanica.Tests.Common/       # Builders de entidades com Bogus, compartilhados por Domain.Tests e Application.Tests
+infra/                                  # Infraestrutura como codigo (Terraform / Azure) - ver secao "Infraestrutura (Terraform / Azure)"
+k8s/                                    # Manifests Kubernetes (Deployment, Service, Ingress, HPA) - ver secao "Kubernetes"
 ```
 
 ## Convencoes
@@ -42,7 +44,7 @@ dotnet test tests/OficinaMecanica.Integration.Tests --collect:"XPlat Code Covera
 # Executar API localmente
 dotnet run --project src/OficinaMecanica.API
 
-# Docker (subir tudo: API + banco + logs + SonarQube)
+# Docker (sobe API + SonarQube; o banco e Azure SQL externo, ver secao "Banco de Dados")
 docker compose up -d
 
 # Rebuild da imagem da API apos mudancas de codigo
@@ -86,6 +88,7 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 
 - JWT Bearer com credenciais configuradas em `appsettings.json` (AdminCredentials)
 - Endpoints publicos: consulta OS por numero (`/api/ordens-de-servico/numero/{numero}`) e aprovacao de orcamento (`/api/ordens-de-servico/{id}/aprovar`)
+- `/health` e `/metrics` tambem sao anonimos (nao passam por `[Authorize]`, mapeados via `MapHealthChecks`/`MapMetrics` fora do `MapControllers()`) — ver secao "Observabilidade"
 - Demais endpoints exigem token JWT
 
 ## Busca de Cliente por Documento
@@ -96,27 +99,27 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 
 ## Banco de Dados
 
-- SQL Server via EF Core
+- SQL Server via EF Core — hoje aponta pra um **Azure SQL Database** real (`svsfiap.database.windows.net`, tier serverless sempre-gratis, provisionado via `infra/sqldb/`), nao mais um container local
 - Configurations em `Infrastructure/Data/Configurations/`
-- Em desenvolvimento com Docker: `docker compose up -d` sobe todos os servicos
-- Migration aplicada automaticamente no startup (Program.cs, apenas em Development)
-- Connection string padrao: `Server=localhost,1433;Database=OficinaMecanicaDb;User Id=sa;Password=OficinaMecanica@2024`
+- Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra o Azure SQL tambem, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
+- Connection string vem da variavel de ambiente `ConnectionStrings__DefaultConnection`, lida do arquivo `.env` (fora do Git — copiar de `.env.example` e preencher com o `server_fqdn` do `terraform output` e a senha definida em `infra/terraform.tfvars`)
+- `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env` sempre tem precedencia quando rodando via `docker compose`
 
 ## Observabilidade
 
-- Serilog com sinks para Console e Seq
-- Seq disponivel em `http://localhost:5341` via docker compose
-- Credenciais do Seq: `admin` / `Admin@123` (configurado via `SEQ_FIRSTRUN_ADMINPASSWORD` no docker-compose)
+- Serilog com sink para Console
+- `GET /health`: health check simples (`AddHealthChecks()`/`MapHealthChecks`, sem verificacao de dependencias como banco) — so confirma que o processo esta de pe. Sem autenticacao.
+- `GET /metrics`: metricas no formato Prometheus (`prometheus-net.AspNetCore`, `UseHttpMetrics()`/`MapMetrics()`) — contagem/duracao de requests HTTP por padrao. Sem autenticacao.
+- Scrape configurado via `ServiceMonitor` em `k8s/monitoring/servicemonitor.yaml`, apontando pro Prometheus instalado em `infra/helm/monitoring.tf` (kube-prometheus-stack)
 
 ## Docker
 
 Servicos no docker compose (`docker compose up -d` sobe todos):
-- **oficinamecanica-db**: SQL Server 2022, porta 1433
-- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno)
-- **oficinamecanica-seq**: Seq, porta 5341
+- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — conecta no Azure SQL Database via `.env`, nao tem mais banco local no compose
 - **oficinamecanica-sonar**: SonarQube 10 Community, porta 9000
 - **oficinamecanica-sonar-db**: PostgreSQL 15 (banco do SonarQube), interno
 - **oficinamecanica-sonar-setup**: container de inicializacao unica — cria o projeto `oficina-mecanica` e configura a senha do admin no primeiro boot
+- **oficinamecanica-trivy**: scanner de vulnerabilidades (profile `security`, nao sobe com `docker compose up -d`) — ver secao "Analise de Vulnerabilidades" no README
 
 Credenciais SonarQube: `admin` / `Admin@Sonar2024`  
 Dashboard do projeto: `http://localhost:9000/dashboard?id=oficina-mecanica`  
@@ -125,3 +128,98 @@ Relatorio de qualidade: `docs/sonarqube-report.md`
 Notas importantes:
 - `InvariantGlobalization` deve ser `false` no `OficinaMecanica.API.csproj` — o SqlClient precisa da cultura `en-us`. Definir como `true` quebra a conexao com o banco mesmo que `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false` esteja no docker-compose (a propriedade do csproj e compilada no binario e tem precedencia)
 - `SONAR_ES_BOOTSTRAP_CHECKS_DISABLE=true` e necessario para o SonarQube no Docker Desktop (Windows/macOS) onde `vm.max_map_count` nao e configuravel pelo usuario
+
+## Infraestrutura (Terraform / Azure)
+
+Pasta `infra/` — provisiona a infraestrutura real do projeto no Azure via
+Terraform (`azurerm` ~> 4.0 e `helm` ~> 2.0). Raiz (`infra/*.tf`) + 7 modulos:
+
+- **`infra/rg/`**: resource group (`rgfiap`, `northcentralus`)
+- **`infra/storage/`**: storage account (`stfiap`) que guarda o tfstate remoto (backend `azurerm`, ver `infra/backend.tf`)
+- **`infra/acr/`**: Container Registry (`acrfiap.azurecr.io`), SKU Standard (free tier)
+- **`infra/aks/`**: cluster AKS (`aksfiap`), 1 node `Standard_D2s_v3` (nao-gratis, usar `az aks stop`/`start` pra nao gerar custo ocioso — mas isso NAO para o IP publico do Load Balancer nem o disco do node, que continuam cobrando mesmo com o cluster parado), Azure CNI Overlay, integrado ao ACR via role assignment `AcrPull`. Tambem tem `oidc_issuer_enabled`, `workload_identity_enabled` e o addon `key_vault_secrets_provider` (CSI Secrets Store driver) habilitados, com role assignment `Key Vault Secrets User` na identidade do driver pro `infra/keyvault`
+- **`infra/keyvault/`**: Key Vault (`kvfiap`), RBAC-based (`rbac_authorization_enabled`), rede restrita ao IP do cliente (`network_acls`, `default_action = Deny`) + bypass pra servicos Azure confiaveis. Ainda nao usado pelo Deployment da API (que usa `k8s/oficinamecanica-api/secret.yaml` nativo por enquanto) — preparado pra quando entrar CI/CD
+- **`infra/helm/`**: dois `helm_release` — `ingress-nginx` (chart oficial, namespace proprio, Service `LoadBalancer`, com a annotation `azure-load-balancer-health-probe-request-path: /healthz` — sem ela, o health probe do proprio Load Balancer do Azure bate em `GET /`, cai na regra catch-all da API e recebe `301` da Swagger UI em vez de `200`, fazendo o Azure bloquear **todo** trafego externo por considerar o `ingress-nginx` inteiro unhealthy) e `monitoring` (`kube-prometheus-stack`: Prometheus + Grafana + kube-state-metrics + node-exporter, sem Alertmanager, PVCs de 8Gi/4Gi na StorageClass `managed-csi-premium` que o proprio AKS ja cria, dashboards do Grafana como codigo via sidecar). Usa o provider `helm` configurado em `infra/providers.tf` apontando pro `infra/aks` via kube_config. Detalhe completo em `apoio/comandos-helm.md`
+- **`infra/sqldb/`**: Azure SQL Database (`svsfiap.database.windows.net` / `OficinaMecanicaDb`), serverless, tier sempre-gratis. O campo que ativa esse tier (`use_free_limit`) nao existe no provider `azurerm` e nao pode ser setado depois via `az sql db update` (so na criacao) — por isso o banco foi criado via `az sql db create --use-free-limit true --free-limit-exhaustion-behavior AutoPause ...` e depois trazido para o state do Terraform com `terraform import`
+
+A assinatura usada (Azure for Students) tem restricao de regiao
+(`sys.regionrestriction`: so libera `chilecentral`, `canadacentral`,
+`northcentralus`, `eastus`, `mexicocentral`). Alem dessa politica geral,
+alguns servicos tem uma segunda trava de **capacidade propria por regiao**
+(passar na politica de regiao nao garante que aquele servico especifico vai
+deixar criar ali): o tamanho de VM do node pool do AKS (serie B bloqueada
+pelo proprio AKS, `Standard_F2s_v2` apareceu como "Size not available" mesmo
+com cota livre — fechado em `Standard_D2s_v3`) e o Azure SQL Database
+(`centralus`/`eastus` bloqueados por `ProvisioningDisabled` apesar de
+permitidos pela politica de regiao — fechado em `canadacentral`). Se o
+provider Terraform nao expuser um campo que so existe via API/CLI (como o
+`use_free_limit` do SQL Database), o caminho e criar o recurso via `az cli`
+e trazer pro Terraform com `terraform import`.
+
+Comandos ficam por conta de quem estiver rodando (nao ha automacao de CI/CD
+pra isso ainda) — sempre a partir de `infra/` como working directory.
+
+## Kubernetes
+
+Pasta `k8s/` — manifests da aplicacao (nao infra de cluster, essa fica em
+`infra/` via Terraform — ver distincao "capacidade vs uso" em
+`apoio/comandos-helm.md`), aplicados na mao com `kubectl apply -f` (sem
+automacao ainda). Organizada em subpastas por assunto:
+
+```
+k8s/
+  oficinamecanica-api/   # manifests da API
+  monitoring/             # "uso" do Prometheus/Grafana (o que monitorar)
+```
+
+### `k8s/oficinamecanica-api/`
+
+- **`deployment.yaml`**: `oficinamecanica-api`, 2 replicas (valor inicial — quem
+  controla depois e o HPA), imagem `acrfiap.azurecr.io/oficinamecanica-api:latest`.
+  Sem `imagePullSecrets` (kubelet do AKS ja tem `AcrPull` via Terraform). Env vars
+  sensiveis (`ConnectionStrings__DefaultConnection`, `JwtSettings__SecretKey`,
+  `AdminCredentials__Senha`) vem de `secretKeyRef` apontando pro Secret
+  `oficinamecanica-secrets`. Readiness/liveness probe em `GET /health`.
+- **`service.yaml`**: ClusterIP, porta 80 -> 8080 (so alcancavel via Ingress),
+  porta nomeada `http` (necessario pro `ServiceMonitor` referenciar por nome).
+- **`ingress.yaml`**: `ingressClassName: nginx`, roteia tudo pro Service. Depende
+  do `ingress-nginx` instalado via `infra/helm/`.
+- **`hpa.yaml`**: HorizontalPodAutoscaler, 2 a 5 replicas por CPU (70%) e memoria
+  (80%). Depende do metrics-server (vem habilitado por padrao no AKS).
+- **`secret.yaml.example`**: template do Secret nativo (`stringData`) com os 3
+  campos sensiveis acima. Copiar para `secret.yaml` (gitignored, mesmo padrao do
+  `.env`/`.env.example`) e preencher com valores reais antes de aplicar. Nome
+  termina em `.example` (nao `.yaml`) de proposito, pra nao ser pego junto
+  quando rodar `kubectl apply -f k8s/oficinamecanica-api/` (mesmo nome de
+  Secret nos dois arquivos).
+
+### `k8s/monitoring/`
+
+- **`servicemonitor.yaml`**: diz pro Prometheus (instalado via
+  `infra/helm/monitoring.tf`) pra fazer scrape do `GET /metrics` da API a
+  cada 30s. Tem o label `release: monitoring` (obrigatorio — e o nome do
+  helm release do Prometheus, sem isso o `ServiceMonitor` e ignorado) e
+  `namespaceSelector` apontando pro namespace `default` (onde o Service da
+  API roda).
+- **`ingress.yaml`**: expoe o Grafana e o Prometheus via `ingress-nginx`
+  (duas regras no mesmo Ingress, ja que os dois tem o mesmo "dono" —
+  observabilidade — diferente do Ingress da API, que fica separado em
+  `k8s/oficinamecanica-api/`), usando host baseado em **nip.io**
+  (`grafana.<ip>.nip.io`/`prometheus.<ip>.nip.io` — resolve sozinho pro IP
+  embutido no nome, sem precisar de dominio real). O IP fica hardcoded nos
+  hosts do arquivo (nao e um placeholder) — precisa ser atualizado pro IP
+  atual do `ingress-nginx-controller` (`kubectl get svc -n ingress-nginx
+  ingress-nginx-controller`) sempre que o Service for recriado. Alternativa
+  mais simples pra teste rapido: `kubectl port-forward` (ver
+  `apoio/comandos-helm.md`).
+- **`dashboard-oficinamecanica-api.yaml`**: `ConfigMap` com o label
+  `grafana_dashboard: "1"` e o JSON do dashboard embutido em `data` — o
+  sidecar do Grafana (`infra/helm/monitoring.yaml.tpl`) detecta sozinho e
+  importa, sem precisar clicar em nada na UI. Paineis usam as metricas reais
+  do `prometheus-net` (`http_requests_received_total`,
+  `http_request_duration_seconds`, `http_requests_in_progress`) mais
+  CPU/memoria/replicas via `kube-state-metrics`/cAdvisor.
+
+O Key Vault (`infra/keyvault/`) e o CSI Secrets Store driver ja estao provisionados
+no cluster, mas o Deployment ainda usa o Secret nativo do Kubernetes — a migracao
+pro Key Vault fica pra quando entrar CI/CD (ver `## Infraestrutura`).
