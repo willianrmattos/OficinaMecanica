@@ -56,6 +56,16 @@ resource "azurerm_kubernetes_cluster" "this" {
   identity {
     type = "SystemAssigned"
   }
+
+  # Declarei explicitamente lista vazia (sem restricao de IP) em vez de
+  # omitir o bloco - o Azure sempre devolve esse objeto (com
+  # authorized_ip_ranges vazio quando sem trava), entao omitir o bloco
+  # gerava o mesmo tipo de diff fantasma do upgrade_settings acima: todo
+  # "terraform plan" tentava remover um bloco que o proprio Azure recoloca
+  # de qualquer forma.
+  api_server_access_profile {
+    authorized_ip_ranges = []
+  }
 }
 
 resource "azurerm_role_assignment" "acr_pull" {
