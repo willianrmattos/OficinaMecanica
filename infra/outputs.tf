@@ -89,3 +89,8 @@ output "azure_subscription_id" {
   value       = data.azurerm_client_config.current.subscription_id
 }
 
+output "key_vault_secrets_provider_client_id" {
+  description = "Client ID da managed identity do addon CSI Secrets Store driver - usar no campo userAssignedIdentityID do SecretProviderClass (k8s/oficinamecanica-api/secret-provider-class.yaml)."
+  value       = module.aks.key_vault_secrets_provider_client_id
+}
+

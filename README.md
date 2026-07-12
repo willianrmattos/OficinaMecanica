@@ -1,6 +1,14 @@
 # OficinaMecanica - Sistema de Gestao para Oficina Mecanica
 
-Sistema backend para gestao de oficina mecanica, desenvolvido em .NET 8 com DDD, Clean Architecture e CQRS.
+Sistema backend para gestao de oficina mecanica, desenvolvido em .NET 8 com DDD, Clean Architecture e CQRS. Cobre o ciclo completo de uma ordem de servico — cadastro de clientes/veiculos, orcamento (servicos + pecas com baixa de estoque), aprovacao/recusa pelo cliente e acompanhamento por notificacao de e-mail — com autenticacao JWT para as rotas administrativas e um conjunto de rotas publicas pensadas para o proprio cliente final.
+
+## Objetivo desta Fase
+
+Esta fase evolui a aplicacao de um container isolado (`docker compose`) para uma implantacao cloud-native completa no Azure, com tres frentes:
+
+1. **Infraestrutura como codigo** (Terraform): todo recurso Azure — cluster Kubernetes, banco de dados, registro de imagens, cofre de segredos, autenticacao do pipeline — e provisionado e versionado como codigo, sem cliques manuais no portal (ver [Infraestrutura](#infraestrutura)).
+2. **Orquestracao em Kubernetes** (AKS): a API roda em pods gerenciados, com autoscaling por CPU/memoria (HPA), segredos sincronizados do Key Vault (sem arquivo de credenciais versionado) e observabilidade via Prometheus/Grafana (ver [Kubernetes](#kubernetes)).
+3. **Entrega continua** (GitHub Actions): todo push na `main` roda build + testes automaticamente e, se tudo passar, publica a imagem no registry e atualiza o Deployment no cluster sem intervencao manual (ver [CI/CD](#cicd)).
 
 ## Diagramas e Relatorios
 
@@ -203,10 +211,56 @@ Terraform, no diretorio [infra/](infra/), organizada em modulos:
 | `infra/keyvault` | Azure Key Vault | Armazenamento centralizado de segredos (rede restrita por IP) |
 | `infra/helm` | Helm Releases (ingress-nginx, kube-prometheus-stack) | Ingress Controller e observabilidade (Prometheus + Grafana) |
 | `infra/sqldb` | Azure SQL Database | Banco de dados relacional gerenciado (tier serverless) |
+| `infra/github_oidc` | Azure AD App Registration + Federated Identity Credential | Autenticacao do GitHub Actions no Azure via OIDC, sem secrets de longa duracao (ver secao [CI/CD](#cicd)) |
 
-O deploy segue o fluxo padrao do Terraform (`init` -> `plan` -> `apply`) a
-partir do diretorio `infra/`, com variaveis sensiveis mantidas fora do
-controle de versao (`terraform.tfvars`, ignorado pelo Git).
+Dois arquivos na raiz de `infra/` (`keyvault_secrets.tf`, `aks_keyvault_access.tf`)
+conectam modulos entre si sem criar dependencia circular entre eles - cada
+um precisa enxergar dois modulos ao mesmo tempo, o que so e possivel na raiz.
+
+### Provisionando a infraestrutura
+
+Pre-requisitos: [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5, Azure CLI autenticado (`az login`) com permissao na assinatura.
+
+```bash
+cd infra
+cp terraform.tfvars.example terraform.tfvars   # preencher os valores (nomes de recursos, regiao, etc.)
+
+# Variaveis sensiveis nao tem default em terraform.tfvars.example de proposito
+# (nunca commitadas) - definir via variavel de ambiente antes do apply:
+export TF_VAR_sql_administrator_login_password="<senha-forte>"
+export TF_VAR_jwt_secret_key="<chave-forte>"
+export TF_VAR_admin_senha="<senha-forte>"
+
+terraform init
+terraform plan    # revisar o que sera criado/alterado antes de aplicar
+terraform apply
+```
+
+> **Nota sobre o backend remoto**: o state fica em uma Storage Account
+> (`infra/storage`, ver `infra/backend.tf`) que e ela mesma criada pelo
+> Terraform — na pratica isso significa que a primeira vez que o projeto foi
+> provisionado precisou de um bootstrap (aplicar `module.storage` com state
+> local antes de configurar o backend remoto). Como a storage account ja
+> existe hoje, um `terraform init` normal e suficiente para quem for rodar a
+> partir daqui.
+
+O `terraform apply` cria todos os 8 modulos na ordem correta de dependencias
+(o proprio Terraform monta esse grafo a partir das referencias entre
+`module.*`, sem precisar de flags especiais) — do Resource Group ate o
+cluster AKS, Key Vault e a federacao OIDC do GitHub Actions. Para aplicar so
+uma parte especifica durante o desenvolvimento (ex: iterar num modulo sem
+tocar nos demais), use `terraform apply -target="module.<nome>"`.
+
+Depois do apply, alguns outputs sao necessarios pra configurar o resto do
+projeto (`.env` da API, variaveis do GitHub Actions):
+
+```bash
+terraform output                          # lista todos os outputs
+terraform output -raw sql_server_fqdn     # ex: valor especifico, sem aspas
+```
+
+Variaveis sensiveis mantidas fora do controle de versao (`terraform.tfvars`,
+ignorado pelo Git).
 
 > **Nota sobre o Azure SQL Database**: o tier sempre-gratis (`use-free-limit`)
 > so pode ser definido no momento da criacao do banco, via Azure CLI — o
@@ -232,7 +286,30 @@ controle de versao (`terraform.tfvars`, ignorado pelo Git).
 
 ## Kubernetes
 
-Os manifests da aplicacao ficam no diretorio [k8s/](k8s/), organizados por assunto:
+Os manifests da aplicacao ficam no diretorio [k8s/](k8s/), organizados por
+assunto. Em condicoes normais eles sao aplicados automaticamente pelo
+pipeline de CI/CD a cada push na `main` (ver [CI/CD](#cicd)) — os passos
+abaixo servem pra rodar o mesmo deploy manualmente (primeira vez, ou fora do
+pipeline).
+
+### Deploy manual no cluster
+
+Pre-requisitos: infraestrutura ja provisionada (secao [Infraestrutura](#infraestrutura)), [kubectl](https://kubernetes.io/docs/tasks/tools/) instalado, Azure CLI autenticado (`az login`).
+
+```bash
+# Autentica o kubectl local contra o cluster AKS (baixa o kubeconfig)
+az aks get-credentials --resource-group rgfiap --name aksfiap
+
+# Aplica os manifests da API (Deployment, Service, Ingress, HPA, SecretProviderClass)
+kubectl apply -f k8s/oficinamecanica-api/
+
+# Aplica os manifests de observabilidade (ServiceMonitor, dashboards, Ingress do Grafana/Prometheus)
+kubectl apply -f k8s/monitoring/
+
+# Acompanha o rollout e confirma que os pods subiram
+kubectl rollout status deployment/oficinamecanica-api
+kubectl get pods
+```
 
 ### `k8s/oficinamecanica-api/`
 
@@ -242,13 +319,15 @@ Os manifests da aplicacao ficam no diretorio [k8s/](k8s/), organizados por assun
 | `service.yaml` | Service (ClusterIP) | Expõe os pods internamente ao cluster |
 | `ingress.yaml` | Ingress | Roteamento externo via ingress-nginx |
 | `hpa.yaml` | HorizontalPodAutoscaler | Escala de 2 a 5 replicas por CPU/memoria |
-| `secret.yaml.example` | Secret (template) | Modelo para as credenciais sensiveis da aplicacao |
+| `secret-provider-class.yaml` | SecretProviderClass | Lê os segredos da aplicação direto do Key Vault e sincroniza para um Secret nativo |
 
-Antes de aplicar, copie `secret.yaml.example` para `secret.yaml` (fora do Git)
-e preencha com os valores reais:
+As credenciais sensíveis (connection string, chave JWT, senha do admin) ficam
+no Azure Key Vault (`infra/keyvault_secrets.tf`), não mais em um arquivo
+aplicado manualmente. O CSI Secrets Store driver sincroniza esses valores
+para o Secret nativo `oficinamecanica-secrets` automaticamente, assim que o
+Deployment monta o `SecretProviderClass` como volume:
 
 ```bash
-kubectl apply -f k8s/oficinamecanica-api/secret.yaml
 kubectl apply -f k8s/oficinamecanica-api/
 ```
 
@@ -275,12 +354,13 @@ kubectl apply -f k8s/monitoring/
 O projeto usa dois sistemas de controle de acesso distintos, que não devem
 ser confundidos:
 
-- **Azure RBAC** (`azurerm_role_assignment`, definido em `infra/aks/main.tf`):
-  concede permissões sobre **recursos do Azure** a identidades gerenciadas
-  do cluster — por exemplo, `AcrPull` (permite ao AKS puxar imagens do
-  Azure Container Registry) e `Key Vault Secrets User` (permite ao CSI
-  Secrets Store driver ler segredos do Key Vault). Esses precisam ser
-  criados explicitamente via Terraform.
+- **Azure RBAC** (`azurerm_role_assignment`): concede permissões sobre
+  **recursos do Azure** a identidades gerenciadas do cluster — `AcrPull`
+  (definido em `infra/aks/main.tf`, permite ao AKS puxar imagens do Azure
+  Container Registry) e `Key Vault Secrets User` (definido em
+  `infra/aks_keyvault_access.tf`, na raiz — permite ao CSI Secrets Store
+  driver ler segredos do Key Vault). Esses precisam ser criados
+  explicitamente via Terraform.
 - **RBAC do Kubernetes** (`ClusterRole`/`ClusterRoleBinding`, nativos do
   cluster): controlam o que cada `ServiceAccount` pode fazer **dentro da
   API do Kubernetes**. O Prometheus e o Grafana instalados via
@@ -291,7 +371,67 @@ ser confundidos:
   pra importar dashboards/datasources. Nenhum desses recursos precisa ser
   criado manualmente.
 
+## CI/CD
+
+O fluxo de deploy e automatizado via GitHub Actions
+([.github/workflows/ci.yml](.github/workflows/ci.yml)), em 3 jobs sequenciais:
+
+```
+push/PR na main
+  -> 1. build-and-test        (restore + build Release + testes Domain/Application/Integration)
+       |
+       | (so segue daqui em push direto na main, nao em PR)
+       v
+     2. build-and-push-image  (login no Azure via OIDC, build da imagem, push pro ACR
+       |                       com as tags <sha-do-commit> e latest)
+       v
+     3. deploy-to-aks         (kubectl apply nos manifests + kubectl set image
+                                pro <sha-do-commit> + kubectl rollout status)
+```
+
+| Job | Quando roda | O que faz |
+|-----|-------------|-----------|
+| `build-and-test` | Todo push ou PR pra `main` | Restore, build, os 3 projetos de teste, publica resultados como Job Summary (`dorny/test-reporter`) e artifact |
+| `build-and-push-image` | So em push direto na `main` | Autentica no Azure (OIDC), publica a imagem no `acrfiap.azurecr.io` com a tag do commit (`github.sha`) e `latest` |
+| `deploy-to-aks` | So em push direto na `main`, apos o job anterior | Aplica os manifests de `k8s/` e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
+
+**Autenticacao sem secrets de longa duracao**: os jobs 2 e 3 autenticam no
+Azure via **OIDC** (`infra/github_oidc/`) — o GitHub emite um token de
+identidade de curta duracao a cada execucao do workflow, e o Azure confia
+nele atraves de uma Federated Identity Credential restrita a
+`repo:<owner>/<repo>:ref:refs/heads/main`. Nao ha nenhum secret de Service
+Principal armazenado no repositorio; as 3 `variables` do repositorio
+(`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, valores nao
+sensiveis — vem dos outputs do Terraform) so identificam pra qual App
+Registration o token deve ser trocado.
+
+**Limitacao conhecida**: o job `deploy-to-aks` falha se o cluster AKS
+estiver parado (`az aks stop`, usado pra nao gerar custo ocioso quando o
+projeto nao esta em uso) — decisao consciente de manter o gatilho automatico
+mesmo assim, em vez de exigir uma etapa manual de "religar o cluster" antes
+de todo deploy.
+
+**Fora do pipeline por enquanto**: a analise de qualidade via SonarQube (ver
+[Analise de Qualidade](#analise-de-qualidade-sonarqube)) continua rodando so
+localmente — a instancia atual vive dentro do Docker Compose do
+desenvolvedor, inalcancavel pelo runner do GitHub Actions. Migrar pra uma
+instancia acessivel (ex: SonarCloud) integraria isso ao job
+`build-and-test`. O provisionamento da infraestrutura (Terraform) tambem
+continua manual (ver [Provisionando a infraestrutura](#provisionando-a-infraestrutura)) — so o deploy da *aplicacao* e automatizado hoje.
+
 ## Endpoints da API
+
+A collection completa e interativa da API (todas as rotas, schemas de request/response, e um botao "Try it out" pra chamar cada endpoint direto do navegador) e gerada automaticamente pelo Swashbuckle a partir dos controllers:
+
+| Ambiente | URL |
+|----------|-----|
+| Local (`dotnet run`) | `https://localhost:{porta}` (porta exibida no console ao subir a API) |
+| Docker (`docker compose up -d`) | http://localhost:5000 |
+| AKS (producao) | IP publico do `ingress-nginx` — `kubectl get svc -n ingress-nginx ingress-nginx-controller` (coluna `EXTERNAL-IP`) |
+
+Nos tres casos a Swagger UI fica na raiz (`/`, `RoutePrefix` vazio) e o JSON OpenAPI cru em `/swagger/v1/swagger.json`.
+
+As tabelas abaixo resumem as mesmas rotas, agrupadas por area, para referencia rapida sem abrir o Swagger:
 
 ### Observabilidade
 | Metodo | Rota | Autenticado | Descricao |

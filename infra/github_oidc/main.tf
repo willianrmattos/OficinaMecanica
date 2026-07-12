@@ -21,13 +21,22 @@ resource "azuread_application_federated_identity_credential" "main_branch" {
   subject        = "repo:${var.github_repo}:ref:refs/heads/main"
 }
 
-# Limitei o escopo ao minimo necessario para este estagio do pipeline: apenas
-# enviar imagens ao ACR. Vou adicionar permissoes extras (ex: deploy no AKS)
-# como role assignments separados quando implementar esse estagio, sem
-# ampliar este aqui.
+# Permissao pro estagio de build+push: so envia imagens ao ACR.
 resource "azurerm_role_assignment" "acr_push" {
   scope                            = var.acr_id
   role_definition_name             = "AcrPush"
+  principal_id                     = azuread_service_principal.github_actions.object_id
+  skip_service_principal_aad_check = true
+}
+
+# Permissao pro estagio de deploy: busca as credenciais do cluster
+# (az aks get-credentials --admin) pra rodar kubectl. "Cluster Admin Role"
+# porque o cluster usa contas locais (nao Azure RBAC pra autorizacao dentro
+# do Kubernetes) - esse role so controla quem consegue buscar o kubeconfig,
+# nao substitui nenhuma RBAC nativa do Kubernetes em si.
+resource "azurerm_role_assignment" "aks_cluster_admin" {
+  scope                            = var.aks_id
+  role_definition_name             = "Azure Kubernetes Service Cluster Admin Role"
   principal_id                     = azuread_service_principal.github_actions.object_id
   skip_service_principal_aad_check = true
 }

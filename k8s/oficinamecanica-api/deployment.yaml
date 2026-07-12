@@ -78,3 +78,19 @@ spec:
               cpu: 500m
               memory: 512Mi
               ephemeral-storage: 512Mi
+          # So preciso desse volume montado pra disparar a sincronizacao do
+          # CSI Secrets Store driver (ver secret-provider-class.yaml) - o
+          # container em si nao le nada desse caminho, os valores continuam
+          # chegando via secretKeyRef acima, a partir do Secret nativo que o
+          # driver mantem atualizado.
+          volumeMounts:
+            - name: secrets-store
+              mountPath: "/mnt/secrets-store"
+              readOnly: true
+      volumes:
+        - name: secrets-store
+          csi:
+            driver: secrets-store.csi.k8s.io
+            readOnly: true
+            volumeAttributes:
+              secretProviderClass: oficinamecanica-secrets-provider

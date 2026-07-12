@@ -100,3 +100,49 @@ jobs:
             acrfiap.azurecr.io/oficinamecanica-api:latest
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  deploy-to-aks:
+    name: Deploy to AKS
+    runs-on: ubuntu-latest
+    needs: build-and-push-image
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Azure Login (OIDC)
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      # Usei admin: true pra buscar o kubeconfig via credenciais de
+      # administrador do cluster (contas locais, nao Azure RBAC de
+      # autorizacao dentro do Kubernetes) - exige a role "Azure Kubernetes
+      # Service Cluster Admin Role" (infra/github_oidc/main.tf) no Service
+      # Principal do GitHub Actions.
+      - name: Set AKS context
+        uses: azure/aks-set-context@v4
+        with:
+          resource-group: rgfiap
+          cluster-name: aksfiap
+          admin: true
+
+      - name: Apply manifests
+        run: |
+          kubectl apply -f k8s/oficinamecanica-api/
+          kubectl apply -f k8s/monitoring/
+
+      # Optei por kubectl set image (em vez de editar o deployment.yaml
+      # direto) para apontar pra tag do commit especifico que acabou de ser
+      # publicada, em vez do ":latest" fixo no arquivo - resolve a pendencia
+      # que o Sonar apontou (ver docs/sonarqube-report.md) sem o pipeline e o
+      # Git brigarem pelo valor da tag no manifest.
+      - name: Deploy new image
+        run: |
+          kubectl set image deployment/oficinamecanica-api api=acrfiap.azurecr.io/oficinamecanica-api:${{ github.sha }}
+          kubectl rollout status deployment/oficinamecanica-api --timeout=180s

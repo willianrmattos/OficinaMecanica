@@ -118,7 +118,7 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 - SQL Server via EF Core — hoje aponta pra um **Azure SQL Database** real (`svsfiap.database.windows.net`, tier serverless sempre-gratis, provisionado via `infra/sqldb/`), nao mais um container local
 - Configurations em `Infrastructure/Data/Configurations/`
 - Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra o Azure SQL tambem, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
-- Connection string vem da variavel de ambiente `ConnectionStrings__DefaultConnection`, lida do arquivo `.env` (fora do Git — copiar de `.env.example` e preencher com o `server_fqdn` do `terraform output` e a senha definida em `infra/terraform.tfvars`)
+- Connection string vem da variavel `SQL_CONNECTION_STRING` no `.env` (fora do Git — copiar de `.env.example` e preencher com o `sql_server_fqdn` do `terraform output` e a senha definida em `infra/terraform.tfvars`), que o `docker-compose.yml` repassa ao container como `ConnectionStrings__DefaultConnection`
 - `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env` sempre tem precedencia quando rodando via `docker compose`
 - O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `JWT_SECRET_KEY`, `ADMIN_USUARIO`/`ADMIN_SENHA` (login da API), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
 
@@ -150,15 +150,24 @@ Notas importantes:
 ## Infraestrutura (Terraform / Azure)
 
 Pasta `infra/` — provisiona a infraestrutura real do projeto no Azure via
-Terraform (`azurerm` ~> 4.0 e `helm` ~> 2.0). Raiz (`infra/*.tf`) + 7 modulos:
+Terraform (`azurerm` ~> 4.0, `helm` ~> 2.0 e `azuread` ~> 3.0). Raiz
+(`infra/*.tf`) + 8 modulos:
 
 - **`infra/rg/`**: resource group (`rgfiap`, `northcentralus`)
 - **`infra/storage/`**: storage account (`stfiap`) que guarda o tfstate remoto (backend `azurerm`, ver `infra/backend.tf`)
 - **`infra/acr/`**: Container Registry (`acrfiap.azurecr.io`), SKU Standard (free tier)
-- **`infra/aks/`**: cluster AKS (`aksfiap`), 1 node `Standard_D2s_v3` (nao-gratis, usar `az aks stop`/`start` pra nao gerar custo ocioso — mas isso NAO para o IP publico do Load Balancer nem o disco do node, que continuam cobrando mesmo com o cluster parado), Azure CNI Overlay, integrado ao ACR via role assignment `AcrPull`. Tambem tem `oidc_issuer_enabled`, `workload_identity_enabled` e o addon `key_vault_secrets_provider` (CSI Secrets Store driver) habilitados, com role assignment `Key Vault Secrets User` na identidade do driver pro `infra/keyvault`
-- **`infra/keyvault/`**: Key Vault (`kvfiap`), RBAC-based (`rbac_authorization_enabled`), rede restrita ao IP do cliente (`network_acls`, `default_action = Deny`) + bypass pra servicos Azure confiaveis. Ainda nao usado pelo Deployment da API (que usa `k8s/oficinamecanica-api/secret.yaml` nativo por enquanto) — preparado pra quando entrar CI/CD
-- **`infra/helm/`**: dois `helm_release` — `ingress-nginx` (chart oficial, namespace proprio, Service `LoadBalancer`, com a annotation `azure-load-balancer-health-probe-request-path: /healthz` — sem ela, o health probe do proprio Load Balancer do Azure bate em `GET /`, cai na regra catch-all da API e recebe `301` da Swagger UI em vez de `200`, fazendo o Azure bloquear **todo** trafego externo por considerar o `ingress-nginx` inteiro unhealthy) e `monitoring` (`kube-prometheus-stack`: Prometheus + Grafana + kube-state-metrics + node-exporter, sem Alertmanager, PVCs de 8Gi/4Gi na StorageClass `managed-csi-premium` que o proprio AKS ja cria, dashboards do Grafana como codigo via sidecar). Usa o provider `helm` configurado em `infra/providers.tf` apontando pro `infra/aks` via kube_config. Detalhe completo em `apoio/comandos-helm.md`
+- **`infra/aks/`**: cluster AKS (`aksfiap`), 1 node `Standard_D2s_v3` (nao-gratis, usar `az aks stop`/`start` pra nao gerar custo ocioso — mas isso NAO para o IP publico do Load Balancer nem o disco do node, que continuam cobrando mesmo com o cluster parado), Azure CNI Overlay, integrado ao ACR via role assignment `AcrPull`. Tambem tem `oidc_issuer_enabled`, `workload_identity_enabled` e o addon `key_vault_secrets_provider` (CSI Secrets Store driver) habilitados
+- **`infra/keyvault/`**: Key Vault (`kvfiap`), RBAC-based (`rbac_authorization_enabled`), rede restrita por IP (`network_acls`, `default_action = Deny`) + bypass pra servicos Azure confiaveis — libera tanto o IP do cliente quanto o IP de saida do cluster AKS (esse ultimo descoberto automaticamente, ver `infra/aks_keyvault_access.tf` abaixo). Os 3 segredos da aplicacao (`infra/keyvault_secrets.tf`, na raiz) sao sincronizados pro Secret nativo do Kubernetes via CSI Secrets Store driver — ver `k8s/oficinamecanica-api/secret-provider-class.yaml`
+- **`infra/helm/`**: dois `helm_release` — `ingress-nginx` (chart oficial, namespace proprio, Service `LoadBalancer`, com a annotation `azure-load-balancer-health-probe-request-path: /healthz` — sem ela, o health probe do proprio Load Balancer do Azure bate em `GET /`, cai na regra catch-all da API e recebe `301` da Swagger UI em vez de `200`, fazendo o Azure bloquear **todo** trafego externo por considerar o `ingress-nginx` inteiro unhealthy) e `monitoring` (`kube-prometheus-stack`: Prometheus + Grafana + kube-state-metrics + node-exporter, sem Alertmanager, PVCs de 8Gi/4Gi na StorageClass `managed-csi-premium` que o proprio AKS ja cria, dashboards do Grafana como codigo via sidecar). Usa o provider `helm` configurado em `infra/providers.tf` apontando pro `infra/aks` via kube_config
 - **`infra/sqldb/`**: Azure SQL Database (`svsfiap.database.windows.net` / `OficinaMecanicaDb`), serverless, tier sempre-gratis. O campo que ativa esse tier (`use_free_limit`) nao existe no provider `azurerm` e nao pode ser setado depois via `az sql db update` (so na criacao) — por isso o banco foi criado via `az sql db create --use-free-limit true --free-limit-exhaustion-behavior AutoPause ...` e depois trazido para o state do Terraform com `terraform import`
+- **`infra/github_oidc/`**: App Registration + Service Principal + Federated Identity Credential (OIDC, restrita a `repo:<owner>/<repo>:ref:refs/heads/main`) usados pelo GitHub Actions pra autenticar no Azure sem nenhum secret de longa duracao. Role assignments `AcrPush` (no `acrfiap`) e `Azure Kubernetes Service Cluster Admin Role` (no `aksfiap`) — ver secao "CI/CD" abaixo
+
+Dois arquivos na raiz (nao dentro de nenhum modulo) conectam modulos entre si
+sem criar dependencia circular — cada um precisa ver outputs de dois modulos
+ao mesmo tempo, o que so e possivel na raiz (modulos nunca "olham de volta"
+pra quem os chama):
+- **`infra/keyvault_secrets.tf`**: os 3 `azurerm_key_vault_secret` da aplicacao (`jwt-secret-key`, `admin-senha`, `sql-connection-string`, essa ultima montada a partir dos outputs do `infra/sqldb`)
+- **`infra/aks_keyvault_access.tf`**: a role assignment `Key Vault Secrets User` pra identidade do addon CSI do `infra/aks` no `infra/keyvault`, mais um `data "azurerm_public_ip"` que descobre automaticamente o IP de saida do cluster (usado no `network_acls` do Key Vault) — nenhum dos dois modulos referencia o outro diretamente
 
 A assinatura usada (Azure for Students) tem restricao de regiao
 (`sys.regionrestriction`: so libera `chilecentral`, `canadacentral`,
@@ -174,15 +183,18 @@ provider Terraform nao expuser um campo que so existe via API/CLI (como o
 `use_free_limit` do SQL Database), o caminho e criar o recurso via `az cli`
 e trazer pro Terraform com `terraform import`.
 
-Comandos ficam por conta de quem estiver rodando (nao ha automacao de CI/CD
-pra isso ainda) — sempre a partir de `infra/` como working directory.
+Comandos do Terraform ficam por conta de quem estiver rodando (nao ha
+automacao de CI/CD pra provisionar infraestrutura ainda) — sempre a partir
+de `infra/` como working directory. O deploy da *aplicacao* (nao da infra)
+ja e automatizado, ver secao "CI/CD" abaixo.
 
 ## Kubernetes
 
 Pasta `k8s/` — manifests da aplicacao (nao infra de cluster, essa fica em
-`infra/` via Terraform — ver distincao "capacidade vs uso" em
-`apoio/comandos-helm.md`), aplicados na mao com `kubectl apply -f` (sem
-automacao ainda). Organizada em subpastas por assunto:
+`infra/` via Terraform). Aplicados automaticamente pelo job `deploy-to-aks`
+do CI/CD a cada push na `main` (ver secao "CI/CD" abaixo) — `kubectl apply -f`
+manual continua funcionando igual, se precisar rodar fora do pipeline.
+Organizada em subpastas por assunto:
 
 ```
 k8s/
@@ -197,19 +209,26 @@ k8s/
   Sem `imagePullSecrets` (kubelet do AKS ja tem `AcrPull` via Terraform). Env vars
   sensiveis (`ConnectionStrings__DefaultConnection`, `JwtSettings__SecretKey`,
   `AdminCredentials__Senha`) vem de `secretKeyRef` apontando pro Secret
-  `oficinamecanica-secrets`. Readiness/liveness probe em `GET /health`.
+  `oficinamecanica-secrets` — esse Secret e sincronizado automaticamente pelo
+  CSI Secrets Store driver (ver `secret-provider-class.yaml` abaixo), nao mais
+  aplicado a mao. Por isso o Deployment tambem monta um volume `secrets-store`
+  (nao lido diretamente pelo container - so existe pra disparar essa
+  sincronizacao). Readiness/liveness probe em `GET /health`.
 - **`service.yaml`**: ClusterIP, porta 80 -> 8080 (so alcancavel via Ingress),
   porta nomeada `http` (necessario pro `ServiceMonitor` referenciar por nome).
 - **`ingress.yaml`**: `ingressClassName: nginx`, roteia tudo pro Service. Depende
   do `ingress-nginx` instalado via `infra/helm/`.
 - **`hpa.yaml`**: HorizontalPodAutoscaler, 2 a 5 replicas por CPU (70%) e memoria
   (80%). Depende do metrics-server (vem habilitado por padrao no AKS).
-- **`secret.yaml.example`**: template do Secret nativo (`stringData`) com os 3
-  campos sensiveis acima. Copiar para `secret.yaml` (gitignored, mesmo padrao do
-  `.env`/`.env.example`) e preencher com valores reais antes de aplicar. Nome
-  termina em `.example` (nao `.yaml`) de proposito, pra nao ser pego junto
-  quando rodar `kubectl apply -f k8s/oficinamecanica-api/` (mesmo nome de
-  Secret nos dois arquivos).
+- **`secret-provider-class.yaml`**: `SecretProviderClass` que le os 3 campos
+  sensiveis direto do Key Vault (`kvfiap`, via `infra/keyvault_secrets.tf`),
+  usando a managed identity do proprio addon `key_vault_secrets_provider`
+  (sem Workload Identity dedicada, escopo simples). O campo `secretObjects`
+  sincroniza esses valores pro Secret nativo `oficinamecanica-secrets` — o
+  Deployment continua lendo esse Secret normalmente, sem saber que a origem
+  mudou. Substitui o antigo `secret.yaml`/`secret.yaml.example` aplicado a
+  mao (ver secao "Banco de Dados"/"Infraestrutura" — o Key Vault ja estava
+  provisionado, essa era a pendencia de conectar ele ao Deployment).
 
 ### `k8s/monitoring/`
 
@@ -228,8 +247,7 @@ k8s/
   hosts do arquivo (nao e um placeholder) — precisa ser atualizado pro IP
   atual do `ingress-nginx-controller` (`kubectl get svc -n ingress-nginx
   ingress-nginx-controller`) sempre que o Service for recriado. Alternativa
-  mais simples pra teste rapido: `kubectl port-forward` (ver
-  `apoio/comandos-helm.md`).
+  mais simples pra teste rapido: `kubectl port-forward`.
 - **`dashboard-oficinamecanica-api.yaml`**: `ConfigMap` com o label
   `grafana_dashboard: "1"` e o JSON do dashboard embutido em `data` — o
   sidecar do Grafana (`infra/helm/monitoring.yaml.tpl`) detecta sozinho e
@@ -238,6 +256,41 @@ k8s/
   `http_request_duration_seconds`, `http_requests_in_progress`) mais
   CPU/memoria/replicas via `kube-state-metrics`/cAdvisor.
 
-O Key Vault (`infra/keyvault/`) e o CSI Secrets Store driver ja estao provisionados
-no cluster, mas o Deployment ainda usa o Secret nativo do Kubernetes — a migracao
-pro Key Vault fica pra quando entrar CI/CD (ver `## Infraestrutura`).
+O Deployment le seus segredos do Key Vault (`infra/keyvault/`) via CSI Secrets
+Store driver — ver `secret-provider-class.yaml` acima e `infra/keyvault_secrets.tf`
+na raiz (ver `## Infraestrutura`).
+
+## CI/CD
+
+`.github/workflows/ci.yml`, 3 jobs sequenciais (`needs:`):
+
+1. **`build-and-test`**: roda em todo push/PR pra `main`. Restore, build
+   (Release), os 3 projetos de teste (`dotnet test`, cache de pacotes NuGet),
+   resultados publicados como Job Summary via `dorny/test-reporter`
+   (`.trx`) e como artifact (`test-results`, retencao de 90 dias).
+2. **`build-and-push-image`**: só em push de verdade na `main` (nao em PR).
+   Autentica no Azure via `azure/login@v2` (OIDC — ver `infra/github_oidc/`),
+   `az acr login`, e publica a imagem no `acrfiap` com 2 tags:
+   `${{ github.sha }}` (hash do commit) e `latest`, via
+   `docker/build-push-action` (cache de camadas `type=gha`).
+3. **`deploy-to-aks`**: idem (só push na `main`). Autentica via
+   `azure/aks-set-context@v4` (`admin: true`, usa contas locais do cluster,
+   nao Azure RBAC de autorizacao dentro do Kubernetes), aplica
+   `k8s/oficinamecanica-api/` e `k8s/monitoring/`, e usa `kubectl set image`
+   apontando pro hash do commit (nao o `:latest` fixo do YAML) + `kubectl
+   rollout status` pra confirmar.
+
+Autenticacao via **OIDC** (`infra/github_oidc/`) — o GitHub emite um token de
+identidade por execucao, sem nenhum secret de longa duracao guardado no
+repositorio. As 3 variables do repositorio (`AZURE_CLIENT_ID`,
+`AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, configuradas via `gh variable
+set`, nao sao secrets — sozinhas nao dao acesso a nada sem o token OIDC) vem
+dos outputs do modulo (`terraform output`).
+
+**Limitacao conhecida**: o `deploy-to-aks` falha se o cluster estiver parado
+(`az aks stop`, usado pra nao gerar custo ocioso) — decisao consciente de
+manter automatico mesmo assim, em vez de gatilho manual.
+
+Analise SonarQube **nao** esta no pipeline ainda: o SonarQube atual só roda
+localmente (`localhost:9000`, dentro do Docker), inalcancavel pelo runner do
+GitHub Actions — precisaria migrar pra SonarCloud ou expor a instancia.

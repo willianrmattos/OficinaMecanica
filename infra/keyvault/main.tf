@@ -19,7 +19,10 @@ resource "azurerm_key_vault" "this" {
   network_acls {
     default_action = "Deny"
     bypass         = "AzureServices"
-    ip_rules       = var.client_ip_address != null ? [var.client_ip_address] : []
+    ip_rules = concat(
+      var.client_ip_address != null ? [var.client_ip_address] : [],
+      var.aks_outbound_ip_address != null ? [var.aks_outbound_ip_address] : []
+    )
   }
 
   tags = var.tags

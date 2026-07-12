@@ -33,7 +33,6 @@ module "aks" {
   resource_group_name  = module.rg.resource_group_name
   cluster_name         = var.aks_cluster_name
   acr_id               = module.acr.registry_id
-  key_vault_id         = module.keyvault.key_vault_id
   authorized_ip_ranges = var.aks_authorized_ip_ranges
   tags                 = var.tags
 }
@@ -41,11 +40,12 @@ module "aks" {
 module "keyvault" {
   source = "./keyvault"
 
-  location            = module.rg.location
-  resource_group_name = module.rg.resource_group_name
-  key_vault_name      = var.key_vault_name
-  client_ip_address   = var.key_vault_client_ip_address
-  tags                = var.tags
+  location                = module.rg.location
+  resource_group_name     = module.rg.resource_group_name
+  key_vault_name          = var.key_vault_name
+  client_ip_address       = var.key_vault_client_ip_address
+  aks_outbound_ip_address = data.azurerm_public_ip.aks_outbound.ip_address
+  tags                    = var.tags
 }
 
 module "helm" {
@@ -74,4 +74,5 @@ module "github_oidc" {
 
   github_repo = var.github_repo
   acr_id      = module.acr.registry_id
+  aks_id      = module.aks.cluster_id
 }

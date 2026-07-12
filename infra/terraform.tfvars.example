@@ -14,5 +14,8 @@ github_repo           = "willianrmattos/OficinaMecanica"
 # sql_client_ip_address       = "203.0.113.5"      # opcional: libera acesso direto ao banco a partir deste IP
 # key_vault_client_ip_address = "203.0.113.5"      # opcional: libera acesso direto ao Key Vault a partir deste IP
 
-# sql_administrator_login_password. Utilizar uma variavel de ambiente:
+# sql_administrator_login_password, jwt_secret_key e admin_senha nao tem
+# default - definir via variavel de ambiente antes do apply:
 # $env:TF_VAR_sql_administrator_login_password = "<senha-forte>"
+# $env:TF_VAR_jwt_secret_key = "<chave-forte>"
+# $env:TF_VAR_admin_senha = "<senha-forte>"

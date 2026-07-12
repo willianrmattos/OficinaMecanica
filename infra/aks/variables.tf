@@ -48,11 +48,6 @@ variable "acr_id" {
   type        = string
 }
 
-variable "key_vault_id" {
-  description = "ID do Key Vault (modulo infra/keyvault), usado para dar permissao de leitura de secrets a managed identity do CSI driver."
-  type        = string
-}
-
 variable "authorized_ip_ranges" {
   description = "IPs (CIDR) autorizados a acessar o API server publico. Lista vazia = sem restricao (qualquer IP acessa, equivalente a deixar 'Set authorized IP ranges' desmarcado no portal)."
   type        = list(string)

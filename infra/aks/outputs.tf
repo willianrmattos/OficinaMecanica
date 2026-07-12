@@ -41,3 +41,31 @@ output "kube_config_cluster_ca_certificate" {
   value     = azurerm_kubernetes_cluster.this.kube_config[0].cluster_ca_certificate
   sensitive = true
 }
+
+output "key_vault_secrets_provider_client_id" {
+  description = "Client ID da managed identity do addon do CSI Secrets Store driver (key_vault_secrets_provider) - usado no SecretProviderClass (k8s/oficinamecanica-api/secret-provider-class.yaml) para autenticar no Key Vault via useVMManagedIdentity."
+  value       = azurerm_kubernetes_cluster.this.key_vault_secrets_provider[0].secret_identity[0].client_id
+}
+
+output "key_vault_secrets_provider_object_id" {
+  description = "Object ID da mesma managed identity acima - usado para conceder role assignments a ela (ex: Key Vault Secrets User). Fica separado do client_id porque quem usa esse valor e o infra/aks_keyvault_access.tf na raiz, nao este modulo (evita a dependencia circular aks <-> keyvault)."
+  value       = azurerm_kubernetes_cluster.this.key_vault_secrets_provider[0].secret_identity[0].object_id
+}
+
+output "node_resource_group" {
+  description = "Nome do resource group gerenciado automaticamente pelo AKS (MC_*), onde ficam os recursos internos do cluster (node VMSS, IP publico de saida, etc.) - necessario para localizar o IP de saida real via data source (infra/aks_keyvault_access.tf)."
+  value       = azurerm_kubernetes_cluster.this.node_resource_group
+}
+
+# Calculei esse nome automaticamente a partir de effective_outbound_ips (um
+# resource ID, nao o IP em si) em vez de fixar manualmente - se o cluster for
+# destruido e recriado, o Azure atribui um IP de saida novo, com um nome de
+# recurso novo, e este output acompanha sozinho, sem precisar de nenhum
+# passo manual pra descobrir e atualizar o valor.
+output "outbound_public_ip_name" {
+  description = "Nome do recurso de IP publico usado para trafego de saida do cluster - usado para consultar o IP real via 'data azurerm_public_ip' (infra/aks_keyvault_access.tf)."
+  value = element(
+    split("/", tolist(azurerm_kubernetes_cluster.this.network_profile[0].load_balancer_profile[0].effective_outbound_ips)[0]),
+    length(split("/", tolist(azurerm_kubernetes_cluster.this.network_profile[0].load_balancer_profile[0].effective_outbound_ips)[0])) - 1
+  )
+}
