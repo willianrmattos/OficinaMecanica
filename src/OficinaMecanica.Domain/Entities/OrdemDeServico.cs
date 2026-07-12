@@ -101,6 +101,16 @@ public class OrdemDeServico : AggregateRoot
         AddDomainEvent(new OrcamentoAprovadoEvent(Id, Numero));
     }
 
+    public void RecusarOrcamento(string? motivo = null)
+    {
+        ValidarTransicao(StatusOrdemDeServico.OrcamentoRecusado);
+        var observacao = string.IsNullOrWhiteSpace(motivo)
+            ? "Orçamento recusado pelo cliente."
+            : $"Orçamento recusado pelo cliente. Motivo: {motivo}";
+        AlterarStatus(StatusOrdemDeServico.OrcamentoRecusado, observacao);
+        AddDomainEvent(new OrcamentoRecusadoEvent(Id, Numero, motivo));
+    }
+
     public void Finalizar()
     {
         ValidarTransicao(StatusOrdemDeServico.Finalizada);
@@ -125,7 +135,7 @@ public class OrdemDeServico : AggregateRoot
     {
         { StatusOrdemDeServico.Recebida, new[] { StatusOrdemDeServico.EmDiagnostico } },
         { StatusOrdemDeServico.EmDiagnostico, new[] { StatusOrdemDeServico.AguardandoAprovacao } },
-        { StatusOrdemDeServico.AguardandoAprovacao, new[] { StatusOrdemDeServico.EmExecucao } },
+        { StatusOrdemDeServico.AguardandoAprovacao, new[] { StatusOrdemDeServico.EmExecucao, StatusOrdemDeServico.OrcamentoRecusado } },
         { StatusOrdemDeServico.EmExecucao, new[] { StatusOrdemDeServico.Finalizada } },
         { StatusOrdemDeServico.Finalizada, new[] { StatusOrdemDeServico.Entregue } },
     };

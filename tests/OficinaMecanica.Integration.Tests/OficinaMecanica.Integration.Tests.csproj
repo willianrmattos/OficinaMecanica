@@ -28,6 +28,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\OficinaMecanica.API\OficinaMecanica.API.csproj" />
     <ProjectReference Include="..\..\src\OficinaMecanica.Infrastructure\OficinaMecanica.Infrastructure.csproj" />
+    <ProjectReference Include="..\OficinaMecanica.Tests.Common\OficinaMecanica.Tests.Common.csproj" />
   </ItemGroup>
 
 </Project>

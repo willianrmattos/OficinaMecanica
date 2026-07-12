@@ -1,6 +1,7 @@
 using OficinaMecanica.Application.Commands.AprovarOrcamento;
 using OficinaMecanica.Application.Commands.AtualizarStatusOrdem;
 using OficinaMecanica.Application.Commands.CriarOrdemDeServico;
+using OficinaMecanica.Application.Commands.RecusarOrcamento;
 using OficinaMecanica.Application.DTOs;
 using OficinaMecanica.Application.Queries.ListarOrdensDeServico;
 using OficinaMecanica.Application.Queries.ObterOrdemDeServico;
@@ -78,6 +79,16 @@ public class OrdensDeServicoController : ControllerBase
         return Ok(resultado);
     }
 
+    [HttpPost("{id:guid}/recusar")]
+    [AllowAnonymous]
+    [ProducesResponseType(typeof(OrdemDeServicoDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    public async Task<IActionResult> RecusarOrcamento(Guid id, [FromBody] RecusarOrcamentoRequest? request)
+    {
+        var resultado = await _mediator.Send(new RecusarOrcamentoCommand(id, request?.Motivo));
+        return Ok(resultado);
+    }
+
     [HttpGet("tempo-medio")]
     [ProducesResponseType(typeof(TempoMedioServicoDto), StatusCodes.Status200OK)]
     public async Task<IActionResult> ObterTempoMedio()
@@ -88,3 +99,4 @@ public class OrdensDeServicoController : ControllerBase
 }
 
 public record AtualizarStatusRequest(int NovoStatus);
+public record RecusarOrcamentoRequest(string? Motivo);

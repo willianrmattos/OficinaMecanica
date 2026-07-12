@@ -9,14 +9,24 @@ services:
       ASPNETCORE_ENVIRONMENT: "Development"
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
       ConnectionStrings__DefaultConnection: "${SQL_CONNECTION_STRING}"
-      JwtSettings__SecretKey: "S3cur3K3y!OficinaMecanica@2024#Jwt$$Token%Secret&Key"
+      JwtSettings__SecretKey: "${JWT_SECRET_KEY}"
       JwtSettings__Issuer: "OficinaMecanica.API"
       JwtSettings__Audience: "OficinaMecanica.Client"
       JwtSettings__ExpiracaoMinutos: "60"
-      AdminCredentials__Usuario: "admin"
-      AdminCredentials__Senha: "Admin@123"
+      AdminCredentials__Usuario: "${ADMIN_USUARIO}"
+      AdminCredentials__Senha: "${ADMIN_SENHA}"
+      Smtp__Host: "mailpit"
+      Smtp__Port: "1025"
+      Smtp__Remetente: "no-reply@oficinamecanica.local"
     ports:
       - "5000:8080"
+
+  mailpit:
+    image: axllent/mailpit:latest
+    container_name: oficinamecanica-mailpit
+    ports:
+      - "8025:8025"
+    restart: unless-stopped
 
   sonarqube:
     image: sonarqube:10-community
@@ -26,8 +36,8 @@ services:
         condition: service_healthy
     environment:
       SONAR_JDBC_URL: jdbc:postgresql://sonarqube-db:5432/sonar
-      SONAR_JDBC_USERNAME: sonar
-      SONAR_JDBC_PASSWORD: sonar
+      SONAR_JDBC_USERNAME: "${SONAR_DB_USER}"
+      SONAR_JDBC_PASSWORD: "${SONAR_DB_PASSWORD}"
       SONAR_ES_BOOTSTRAP_CHECKS_DISABLE: "true"
     ports:
       - "9000:9000"
@@ -46,13 +56,13 @@ services:
     image: postgres:15
     container_name: oficinamecanica-sonar-db
     environment:
-      POSTGRES_USER: sonar
-      POSTGRES_PASSWORD: sonar
+      POSTGRES_USER: "${SONAR_DB_USER}"
+      POSTGRES_PASSWORD: "${SONAR_DB_PASSWORD}"
       POSTGRES_DB: sonar
     volumes:
       - sonarqube_db:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U sonar"]
+      test: ["CMD-SHELL", "pg_isready -U ${SONAR_DB_USER}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -82,6 +92,8 @@ services:
       sonarqube:
         condition: service_healthy
     restart: "no"
+    environment:
+      SONAR_ADMIN_PASSWORD: "${SONAR_ADMIN_PASSWORD}"
     command:
       - /bin/sh
       - -c
@@ -92,15 +104,15 @@ services:
 
         # Troca de senha (ignorado se ja alterada)
         curl -s -u admin:admin -X POST "http://sonarqube:9000/api/users/change_password" \
-          -d "login=admin&previousPassword=admin&password=Admin@Sonar2024" > /dev/null 2>&1 || true
+          -d "login=admin&previousPassword=admin&password=$$SONAR_ADMIN_PASSWORD" > /dev/null 2>&1 || true
 
         # Criacao do projeto (idempotente)
-        curl -s -u admin:Admin@Sonar2024 -X POST "http://sonarqube:9000/api/projects/create" \
+        curl -s -u admin:$$SONAR_ADMIN_PASSWORD -X POST "http://sonarqube:9000/api/projects/create" \
           -d "project=oficina-mecanica&name=OficinaMecanica&visibility=public" > /dev/null 2>&1 || true
 
         echo "==> SonarQube pronto!"
         echo "    Dashboard: http://localhost:9000/dashboard?id=oficina-mecanica"
-        echo "    Login: admin / Admin@Sonar2024"
+        echo "    Login: admin / $$SONAR_ADMIN_PASSWORD"
 
 volumes:
   sonarqube_data:

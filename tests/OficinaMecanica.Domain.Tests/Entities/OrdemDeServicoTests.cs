@@ -60,6 +60,24 @@ public class OrdemDeServicoTests
     }
 
     [Fact]
+    public void RecusarOrcamento_DeAguardandoAprovacao_DeveAlterarStatus()
+    {
+        var ordem = new OrdemDeServicoBuilder().OrcamentoRecusado();
+
+        ordem.Status.Should().Be(StatusOrdemDeServico.OrcamentoRecusado);
+    }
+
+    [Fact]
+    public void RecusarOrcamento_DeStatusInvalido_DeveLancarExcecao()
+    {
+        var ordem = new OrdemDeServicoBuilder().EmDiagnostico();
+
+        var act = () => ordem.RecusarOrcamento();
+
+        act.Should().Throw<DomainException>().WithMessage("*Não é possível*");
+    }
+
+    [Fact]
     public void EnviarParaAprovacao_SemServicos_DeveLancarExcecao()
     {
         var ordem = new OrdemDeServicoBuilder().EmDiagnostico();

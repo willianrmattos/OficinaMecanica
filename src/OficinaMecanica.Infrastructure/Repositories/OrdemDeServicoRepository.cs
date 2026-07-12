@@ -10,9 +10,23 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
 {
     private readonly AppDbContext _context;
 
+    private static readonly StatusOrdemDeServico[] StatusExcluidosPorPadrao =
+    {
+        StatusOrdemDeServico.Finalizada,
+        StatusOrdemDeServico.Entregue
+    };
+
     public OrdemDeServicoRepository(AppDbContext context)
     {
         _context = context;
+    }
+
+    private static IQueryable<OrdemDeServico> AplicarFiltroStatus(IQueryable<OrdemDeServico> query, StatusOrdemDeServico? filtroStatus)
+    {
+        if (filtroStatus.HasValue)
+            return query.Where(o => o.Status == filtroStatus.Value);
+
+        return query.Where(o => !StatusExcluidosPorPadrao.Contains(o.Status));
     }
 
     public async Task<OrdemDeServico?> ObterPorIdAsync(Guid id, CancellationToken cancellationToken = default)
@@ -41,11 +55,11 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
             .Include(o => o.HistoricoStatus)
             .AsQueryable();
 
-        if (filtroStatus.HasValue)
-            query = query.Where(o => o.Status == filtroStatus.Value);
+        query = AplicarFiltroStatus(query, filtroStatus);
 
         return await query
-            .OrderByDescending(o => o.DataAbertura)
+            .OrderByDescending(o => o.Status)
+            .ThenBy(o => o.DataAbertura)
             .Skip((pagina - 1) * tamanhoPagina)
             .Take(tamanhoPagina)
             .ToListAsync(cancellationToken);
@@ -54,8 +68,7 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
     public async Task<int> ContarAsync(StatusOrdemDeServico? filtroStatus = null, CancellationToken cancellationToken = default)
     {
         var query = _context.OrdensDeServico.AsQueryable();
-        if (filtroStatus.HasValue)
-            query = query.Where(o => o.Status == filtroStatus.Value);
+        query = AplicarFiltroStatus(query, filtroStatus);
         return await query.CountAsync(cancellationToken);
     }
 

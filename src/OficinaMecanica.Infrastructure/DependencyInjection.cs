@@ -1,4 +1,5 @@
 using System.Text;
+using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Domain.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.Infrastructure.Repositories;
@@ -34,6 +35,9 @@ public static class DependencyInjection
 
         // Token Service
         services.AddScoped<ITokenService, TokenService>();
+
+        // Email Service
+        services.AddScoped<IEmailService, SmtpEmailService>();
 
         // JWT Authentication
         var jwtSettings = configuration.GetSection("JwtSettings");

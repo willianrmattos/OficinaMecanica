@@ -36,6 +36,13 @@ public class OrdemDeServicoBuilder
         return o;
     }
 
+    public OrdemDeServico OrcamentoRecusado(string nomeServico = "Troca de Óleo", decimal preco = 100m, string? motivo = null)
+    {
+        var o = AguardandoAprovacao(nomeServico, preco);
+        o.RecusarOrcamento(motivo);
+        return o;
+    }
+
     public OrdemDeServico Finalizada(string nomeServico = "Troca de Óleo", decimal preco = 100m)
     {
         var o = EmExecucao(nomeServico, preco);

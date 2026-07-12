@@ -1,6 +1,6 @@
 # Relatorio de Vulnerabilidades — OficinaMecanica
 
-**Data:** 2026-07-08
+**Data:** 2026-07-12
 **Ferramenta:** Trivy (aquasec/trivy:latest, v0.71.2)
 **Imagem:** `oficinamecanica-api:latest`
 **Imagem base:** `mcr.microsoft.com/dotnet/aspnet:8.0` (Debian 12.14 / Bookworm, runtime .NET 8.0.28)
@@ -18,7 +18,7 @@
 | DESCONHECIDO | **9**          | Avaliar            |
 | **TOTAL**    | **165**        |                    |
 
-> Em relacao ao relatorio anterior (2026-06-26, total 183), o numero caiu porque o rebuild trouxe um runtime .NET mais novo (8.0.28) e um patch level mais recente do Debian 12.14, que ja corrigiu as vulnerabilidades de `libgnutls30`/`openssl`/`libssl3` reportadas antes. Em compensacao, novos CVEs de outros pacotes (`util-linux`, `gzip`, `libacl1`) foram publicados desde entao.
+> Em relacao ao relatorio anterior (2026-07-08, total 165), os numeros nao mudaram: a tag `mcr.microsoft.com/dotnet/aspnet:8.0` continua resolvendo para o mesmo digest de imagem base (nenhum patch novo do Debian foi publicado nesse intervalo), e nenhuma dependencia NuGet vulneravel (`Azure.Identity`, `Microsoft.Data.SqlClient`, `Microsoft.IdentityModel.JsonWebTokens`/`System.IdentityModel.Tokens.Jwt`) foi atualizada nesta sessao. O pacote `MailKit` foi adicionado ao projeto (canal de notificacao por e-mail) e nao introduziu nenhuma vulnerabilidade nova.
 
 ---
 
@@ -117,6 +117,7 @@ Exigem correcao antes do proximo deploy em producao.
   - `Microsoft.Data.SqlClient` 5.1.1 → 5.1.3 (1 HIGH)
   - `Microsoft.IdentityModel.JsonWebTokens` / `System.IdentityModel.Tokens.Jwt` 7.0.3 → 7.1.2 (2 MEDIUM)
 - **Sem fix disponivel:** 159 vulnerabilidades (aguardando patch do fornecedor Debian — a maior parte em `perl-base` e na familia `util-linux`)
+- **`MailKit`** (adicionado nesta sessao para o canal de notificacao por e-mail, ver `SmtpEmailService`): 0 vulnerabilidades conhecidas detectadas.
 
 ---
 
@@ -137,7 +138,7 @@ Exigem correcao antes do proximo deploy em producao.
 | # | Acao | Impacto |
 |---|------|---------|
 | 6 | Avaliar remocao de `perl-base` da imagem (sem fix para 3 CVEs CRITICAL/HIGH) | Eliminacao de superficie de ataque |
-| 7 | Adicionar usuario nao-root no Dockerfile (`USER appuser`) — ainda pendente, ver `docs/sonarqube-report.md` | Mitigacao de impacto em caso de RCE |
+| ~~7~~ | ~~Adicionar usuario nao-root no Dockerfile~~ — **feito** (`USER $APP_UID`, ver `docs/sonarqube-report.md`) | Mitigacao de impacto em caso de RCE |
 | 8 | Adicionar scan Trivy no CI/CD com `--exit-code 1` para CRITICAL/HIGH | Prevencao de regressao |
 
 ### Recorrente
@@ -153,7 +154,7 @@ Exigem correcao antes do proximo deploy em producao.
 ## 8. Como Executar o Scan
 
 ```bash
-# Subir a API e rodar o scan (gera docs/trivy-report-raw.json)
+# Subir a API e rodar o scan (gera docs/trivy-report-raw.json, filtrado CRITICAL/HIGH/MEDIUM)
 docker compose build api && docker compose run --rm trivy
 
 # Scan direto (sem Compose)
@@ -173,6 +174,8 @@ docker run --rm \
   --output /reports/trivy-full.json \
   oficinamecanica-api:latest
 ```
+
+> No Git Bash (Windows), prefixe os comandos `docker run`/`docker compose run` acima com `MSYS_NO_PATHCONV=1` — sem isso, o Bash converte os caminhos `/var/run/docker.sock` e `/reports/...` como se fossem paths locais do Windows, quebrando o volume mount e o `--output`.
 
 ---
 

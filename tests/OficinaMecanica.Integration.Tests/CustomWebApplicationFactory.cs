@@ -1,3 +1,4 @@
+using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -29,8 +30,22 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
             using var scope = sp.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
             db.Database.EnsureCreated();
+
+            var emailServiceDescriptor = services.SingleOrDefault(
+                d => d.ServiceType == typeof(IEmailService));
+
+            if (emailServiceDescriptor != null)
+                services.Remove(emailServiceDescriptor);
+
+            services.AddScoped<IEmailService, FakeEmailService>();
         });
 
         builder.UseEnvironment("Development");
+    }
+
+    private class FakeEmailService : IEmailService
+    {
+        public Task EnviarAsync(string destinatario, string assunto, string corpo, CancellationToken cancellationToken = default)
+            => Task.CompletedTask;
     }
 }

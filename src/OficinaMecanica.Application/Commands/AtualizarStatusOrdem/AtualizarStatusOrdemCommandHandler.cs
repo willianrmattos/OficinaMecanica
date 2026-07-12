@@ -44,6 +44,8 @@ public class AtualizarStatusOrdemCommandHandler : IRequestHandler<AtualizarStatu
                 break;
             case StatusOrdemDeServico.EmExecucao:
                 throw new DomainException("Para colocar a ordem em execução é necessário aprová-la pelo endpoint de aprovação.");
+            case StatusOrdemDeServico.OrcamentoRecusado:
+                throw new DomainException("Para recusar o orçamento é necessário usar o endpoint de recusa.");
             default:
                 throw new DomainException($"Transição para o status '{novoStatus}' não é suportada.");
         }

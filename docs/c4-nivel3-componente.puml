@@ -8,7 +8,8 @@ title OficinaMecanica API - Nivel 3: Componente
 
 Person(admin, "Administrador", "Usuario autenticado")
 Person_Ext(cliente, "Cliente Final", "Acesso anonimo")
-ContainerDb_Ext(db, "OficinaMecanicaDb", "SQL Server 2022")
+ContainerDb_Ext(db, "OficinaMecanicaDb", "Azure SQL Database")
+System_Ext(smtp, "Servidor SMTP", "Mailpit (dev)")
 
 Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 
@@ -20,15 +21,19 @@ Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 
     Component(pipeline, "ValidationBehavior", "MediatR IPipelineBehavior", "Intercepta todo Command e Query. Executa FluentValidation e lanca ValidationException se invalido.")
 
-    Component(cmdHandlers, "Command Handlers", "MediatR IRequestHandler (escrita)", "CriarCliente, AtualizarCliente, RemoverCliente, CriarVeiculo, AtualizarVeiculo, RemoverVeiculo, CriarServico, AtualizarServico, DesativarServico, CriarPeca, AtualizarPeca, DesativarPeca, AdicionarEstoquePeca, CriarOrdemDeServico, AtualizarStatusOrdem, AprovarOrcamento.")
+    Component(cmdHandlers, "Command Handlers", "MediatR IRequestHandler (escrita)", "CriarCliente, AtualizarCliente, RemoverCliente, CriarVeiculo, AtualizarVeiculo, RemoverVeiculo, CriarServico, AtualizarServico, DesativarServico, CriarPeca, AtualizarPeca, DesativarPeca, AdicionarEstoquePeca, CriarOrdemDeServico, AtualizarStatusOrdem, AprovarOrcamento, RecusarOrcamento.")
 
-    Component(qryHandlers, "Query Handlers", "MediatR IRequestHandler (leitura)", "ObterCliente, ListarClientes, ObterClientePorDocumento, ObterVeiculo, ListarVeiculos, ObterServico, ListarServicos, ObterPeca, ListarPecas, ObterOrdemDeServico, ListarOrdensDeServico, ObterTempoMedioServicos.")
+    Component(qryHandlers, "Query Handlers", "MediatR IRequestHandler (leitura)", "ObterCliente, ListarClientes, ObterClientePorDocumento, ObterVeiculo, ListarVeiculos, ObterServico, ListarServicos, ObterPeca, ListarPecas, ObterOrdemDeServico, ListarOrdensDeServico (exclui Finalizada/Entregue por padrao, ordena por prioridade de status), ObterTempoMedioServicos.")
 
-    Component(aggregates, "Agregados (DDD)", "Domain Entities / AggregateRoot", "Cliente, Veiculo, OrdemDeServico, Servico, Peca. Encapsulam invariantes e regras de negocio. Fluxo de status da OS controlado pelo dominio (Recebida ate Entregue). Baixa automatica de estoque ao aprovar orcamento.")
+    Component(aggregates, "Agregados (DDD)", "Domain Entities / AggregateRoot", "Cliente, Veiculo, OrdemDeServico, Servico, Peca. Encapsulam invariantes e regras de negocio. Fluxo de status da OS controlado pelo dominio (Recebida ate Entregue, com o desvio AguardandoAprovacao -> OrcamentoRecusado). Baixa automatica de estoque ao aprovar orcamento (nao ocorre ao recusar).")
 
     Component(valueObjects, "Value Objects", "Domain ValueObject", "Documento: valida CPF e CNPJ com algoritmo de digitos verificadores. Placa: valida formato antigo (ABC1234) e Mercosul (ABC1D23).")
 
-    Component(domainEvents, "Domain Events", "MediatR INotification", "OrdemDeServicoCriadaEvent, StatusOrdemAlteradoEvent, OrcamentoGeradoEvent, OrcamentoAprovadoEvent. Publicados pelo AppDbContext via IMediator apos SaveChangesAsync.")
+    Component(domainEvents, "Domain Events", "MediatR INotification", "OrdemDeServicoCriadaEvent, StatusOrdemAlteradoEvent, OrcamentoGeradoEvent, OrcamentoAprovadoEvent, OrcamentoRecusadoEvent. Publicados pelo AppDbContext via IMediator apos SaveChangesAsync.")
+
+    Component(eventHandlers, "Event Handlers", "MediatR INotificationHandler", "StatusOrdemAlteradoEventHandler: consome StatusOrdemAlteradoEvent (qualquer transicao de status) e envia notificacao por e-mail ao cliente via IEmailService. Unico handler ja implementado - os demais eventos nao tem consumidor ainda.")
+
+    Component(emailSvc, "IEmailService / SmtpEmailService", "Application.Interfaces / Infrastructure.Services (MailKit)", "Envia e-mail via SMTP direto (sem provedor externo). Resiliente: falha de conexao/envio so loga Warning, nunca lanca excecao.")
 
     Component(repos, "Repositories", "EF Core / IRepository", "ClienteRepository, VeiculoRepository, ServicoRepository, PecaRepository, OrdemDeServicoRepository. Implementam interfaces definidas no dominio.")
 
@@ -36,7 +41,7 @@ Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 }
 
 Rel_D(admin, middleware, "Requisicoes autenticadas (JWT Bearer)", "HTTPS")
-Rel_D(cliente, middleware, "Consulta OS e aprova orcamento", "HTTPS")
+Rel_D(cliente, middleware, "Consulta OS e aprova ou recusa orcamento", "HTTPS")
 Rel_D(middleware, controllers, "Repassa apos tratamento de erros")
 Rel(controllers, tokenSvc, "Solicita token JWT", "ITokenService")
 Rel_D(controllers, pipeline, "Despacha Command ou Query", "IMediator.Send")
@@ -50,5 +55,8 @@ Rel_D(qryHandlers, repos, "Consulta via interfaces do dominio")
 Rel_D(repos, dbctx, "Usa transacao compartilhada")
 Rel(dbctx, domainEvents, "Publica pos-SaveChanges", "IMediator.Publish")
 Rel_D(dbctx, db, "Le e escreve via EF Core", "SQL / TDS 1433")
+Rel_D(domainEvents, eventHandlers, "Despacha StatusOrdemAlteradoEvent", "IMediator.Publish")
+Rel(eventHandlers, emailSvc, "Envia notificacao", "IEmailService")
+Rel_R(emailSvc, smtp, "Conecta e envia", "SMTP")
 
 @enduml

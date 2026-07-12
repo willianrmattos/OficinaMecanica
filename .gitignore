@@ -62,6 +62,10 @@ coverage/
 *.coveragexml
 *.coverage
 
+# Saida bruta de scans
+docs/trivy-report-raw.json
+docs/trivy-full.json
+
 # SonarQube
 .sonarqube/
 .sonar/

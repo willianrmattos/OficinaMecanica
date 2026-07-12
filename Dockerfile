@@ -21,4 +21,6 @@ FROM base AS final
 WORKDIR /app
 COPY --from=build /app/publish .
 ENV ASPNETCORE_URLS=http://+:8080
+# Utilizando usuario nao-root (ja vem criado na imagem base mcr.microsoft.com/dotnet/aspnet:8.0)
+USER $APP_UID
 ENTRYPOINT ["dotnet", "OficinaMecanica.API.dll"]

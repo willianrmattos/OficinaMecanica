@@ -50,10 +50,12 @@ O dominio de oficina mecanica exige **consistencia transacional forte**: ao apro
 ### Gestao de Ordens de Servico (Core)
 - Criacao de OS com cliente, veiculo, servicos e pecas
 - Geracao automatica de orcamento
-- Fluxo de status controlado pelo dominio: Recebida -> EmDiagnostico -> AguardandoAprovacao -> EmExecucao -> Finalizada -> Entregue
+- Fluxo de status controlado pelo dominio: Recebida -> EmDiagnostico -> AguardandoAprovacao -> EmExecucao -> Finalizada -> Entregue (com o desvio AguardandoAprovacao -> OrcamentoRecusado)
 - Historico completo de mudancas de status
 - Consulta publica por numero da OS (acompanhamento pelo cliente)
-- Aprovacao de orcamento com baixa automatica no estoque
+- Aprovacao ou recusa de orcamento (endpoints publicos, pensados para notificacao externa do cliente) com baixa automatica no estoque na aprovacao
+- Listagem priorizada por status (OS em execucao aparecem antes de recebidas) e mais antigas primeiro, ocultando por padrao as ja finalizadas/entregues
+- Notificacao por e-mail ao cliente a cada mudanca de status da OS
 
 ### Gestao Administrativa
 - CRUD de Clientes com busca por CPF/CNPJ
@@ -77,19 +79,27 @@ O dominio de oficina mecanica exige **consistencia transacional forte**: ao apro
 
 O banco de dados nao roda em container: a API se conecta a um Azure SQL
 Database gerenciado na nuvem. Antes de subir o compose, copie `.env.example`
-para `.env` e preencha `SQL_CONNECTION_STRING` com o servidor e a senha do
-seu Azure SQL Database (a infraestrutura correspondente e provisionada via
-Terraform, ver secao [Infraestrutura](#infraestrutura)).
+para `.env` e preencha as variaveis (nenhuma credencial fica hardcoded no
+`docker-compose.yml`, que e versionado):
+
+| Variavel | Uso |
+|---|---|
+| `SQL_CONNECTION_STRING` | Connection string do Azure SQL Database (servidor e senha, ver secao [Infraestrutura](#infraestrutura)) |
+| `JWT_SECRET_KEY` | Chave usada para assinar os tokens JWT |
+| `ADMIN_USUARIO` / `ADMIN_SENHA` | Credenciais de login da API (`POST /api/auth/login`) |
+| `SONAR_DB_USER` / `SONAR_DB_PASSWORD` | Credenciais do Postgres interno do SonarQube |
+| `SONAR_ADMIN_PASSWORD` | Senha definida pro admin do SonarQube no primeiro boot |
 
 ```bash
-cp .env.example .env   # preencher SQL_CONNECTION_STRING antes de continuar
+cp .env.example .env   # preencher as variaveis antes de continuar
 docker compose up -d
 ```
 
 | Servico | URL | Credenciais |
 |---------|-----|-------------|
-| API + Swagger | http://localhost:5000 | — |
-| SonarQube | http://localhost:9000 | admin / Admin@Sonar2024 |
+| API + Swagger | http://localhost:5000 | `ADMIN_USUARIO` / `ADMIN_SENHA` (`.env`) |
+| SonarQube | http://localhost:9000 | admin / `SONAR_ADMIN_PASSWORD` (`.env`) |
+| Mailpit (e-mails capturados) | http://localhost:8025 | — |
 
 > A migration e aplicada automaticamente na primeira execucao (contra o Azure SQL configurado no `.env`). O SonarQube leva ~2 minutos para inicializar; o projeto `oficina-mecanica` e criado automaticamente pelo servico `sonar-setup`.
 
@@ -294,7 +304,7 @@ ser confundidos:
 |--------|------|-----------|
 | POST | /api/auth/login | Login (retorna JWT) |
 
-Credenciais padrao: `admin` / `Admin@123`
+Credenciais: valor de `ADMIN_USUARIO`/`ADMIN_SENHA` no `.env` (rodando via Docker) ou `AdminCredentials` no `appsettings.json` (rodando localmente) — default sugerido nos dois: `admin` / `Admin@123`
 
 ### Clientes
 | Metodo | Rota | Autenticado | Descricao |
@@ -342,9 +352,10 @@ Credenciais padrao: `admin` / `Admin@123`
 | POST | /api/ordens-de-servico | Sim | Criar OS |
 | GET | /api/ordens-de-servico/{id} | Sim | Obter OS por ID |
 | GET | /api/ordens-de-servico/numero/{numero} | Nao | Consulta publica por numero |
-| GET | /api/ordens-de-servico | Sim | Listar OS (paginado, filtro por status) |
-| PATCH | /api/ordens-de-servico/{id}/status | Sim | Atualizar status |
+| GET | /api/ordens-de-servico | Sim | Listar OS (paginado, filtro por status; sem filtro, exclui Finalizada/Entregue e ordena por prioridade de status + mais antigas primeiro) |
+| PATCH | /api/ordens-de-servico/{id}/status | Sim | Atualizar status (bloqueado para EmExecucao e OrcamentoRecusado, que tem endpoint proprio) |
 | POST | /api/ordens-de-servico/{id}/aprovar | Nao | Aprovar orcamento |
+| POST | /api/ordens-de-servico/{id}/recusar | Nao | Recusar orcamento (corpo opcional `{ "motivo": "..." }`) |
 | GET | /api/ordens-de-servico/tempo-medio | Sim | Tempo medio de execucao |
 
 ## Regras de Negocio
@@ -355,6 +366,8 @@ Credenciais padrao: `admin` / `Admin@123`
 
 ```
 Recebida → EmDiagnostico → AguardandoAprovacao → EmExecucao → Finalizada → Entregue
+                                    ↓
+                            OrcamentoRecusado
 ```
 
 Nenhuma transicao pode ser pulada. Tentar ir de `Recebida` direto para `EmExecucao`, por exemplo, lanca `DomainException`.
@@ -364,6 +377,7 @@ Nenhuma transicao pode ser pulada. Tentar ir de `Recebida` direto para `EmExecuc
 | Recebida → EmDiagnostico | — |
 | EmDiagnostico → AguardandoAprovacao | A OS deve ter pelo menos um servico adicionado |
 | AguardandoAprovacao → EmExecucao | Aprovacao do orcamento — da baixa automatica no estoque de todas as pecas da OS |
+| AguardandoAprovacao → OrcamentoRecusado | Recusa do orcamento — sem baixa de estoque, motivo opcional registrado no historico |
 | EmExecucao → Finalizada | Registra `DataConclusao` |
 | Finalizada → Entregue | — |
 
@@ -377,7 +391,9 @@ Nenhuma transicao pode ser pulada. Tentar ir de `Recebida` direto para `EmExecuc
 
 **Consulta publica** — o endpoint `GET /api/ordens-de-servico/numero/{numero}` e anonimo para que o cliente final acompanhe o status da OS sem precisar de conta.
 
-**Aprovacao de orcamento** — o endpoint `POST /api/ordens-de-servico/{id}/aprovar` tambem e anonimo (link enviado ao cliente). Internamente chama `AprovarOrcamento()` no dominio.
+**Aprovacao ou recusa de orcamento** — os endpoints `POST /api/ordens-de-servico/{id}/aprovar` e `POST /api/ordens-de-servico/{id}/recusar` sao anonimos (pensados para receber uma notificacao externa do cliente, ex: link enviado por e-mail). Internamente chamam `AprovarOrcamento()`/`RecusarOrcamento(motivo)` no dominio. `StatusOrdemDeServico.OrcamentoRecusado` vale `0` (nao o proximo numero livre) de proposito: a listagem ordena por `OrderByDescending(Status)`, entao um valor baixo faz OS recusadas ficarem no fim da fila de prioridade, sem exigir um mapeamento de prioridade customizado.
+
+**Listagem** (`GET /api/ordens-de-servico`) — sem `filtroStatus` explicito, exclui logicamente (via filtro de query, sem soft-delete fisico) as OS em `Finalizada`/`Entregue` e ordena por prioridade de status (`EmExecucao > AguardandoAprovacao > EmDiagnostico > Recebida > OrcamentoRecusado`), mais antigas primeiro dentro do mesmo status. Passar `filtroStatus` explicitamente (ex: `?filtroStatus=Finalizada`) sobrepoe essa exclusao padrao.
 
 ### Clientes e Veiculos
 
@@ -405,8 +421,17 @@ Os eventos sao publicados pelo `AppDbContext.SaveChangesAsync` via `IMediator.Pu
 | `StatusOrdemAlteradoEvent` | Qualquer transicao de status ocorre | `OrdemDeServicoId`, `Numero`, `NovoStatus` |
 | `OrcamentoGeradoEvent` | OS avanca para `AguardandoAprovacao` | `OrdemDeServicoId`, `Numero`, `ValorTotal` |
 | `OrcamentoAprovadoEvent` | Orcamento e aprovado (`EmExecucao`) | `OrdemDeServicoId`, `Numero` |
+| `OrcamentoRecusadoEvent` | Orcamento e recusado (`OrcamentoRecusado`) | `OrdemDeServicoId`, `Numero`, `Motivo` |
 
-> **Estado atual:** a infraestrutura de eventos esta completa (disparo, publicacao via MediatR), porem **nenhum `INotificationHandler` foi implementado ainda**. Os eventos sao publicados mas nao ha observadores consumindo-os. Casos de uso previstos para implementacao futura: envio de e-mail/SMS ao cliente na aprovacao do orcamento, notificacao de estoque critico apos baixa, integracao com sistemas externos.
+> **Estado atual:** `StatusOrdemAlteradoEvent` tem um `INotificationHandler` implementado — `StatusOrdemAlteradoEventHandler` (`OficinaMecanica.Application.EventHandlers`), que envia e-mail ao cliente a cada mudanca de status (ver secao [Notificacao por E-mail](#notificacao-por-e-mail)). Um unico handler nesse evento cobre todas as transicoes (aprovacao, recusa, avanco de diagnostico etc.) sem precisar de um handler por evento especifico. Os demais eventos (`OrdemDeServicoCriadaEvent`, `OrcamentoGeradoEvent`, `OrcamentoAprovadoEvent`, `OrcamentoRecusadoEvent`) continuam publicados mas sem nenhum handler consumindo-os — ficam disponiveis para casos de uso futuros (ex: notificacao de estoque critico, integracao com sistemas externos) sem exigir mudanca no dominio.
+
+## Notificacao por E-mail
+
+- Toda mudanca de status de uma OS dispara um e-mail ao cliente (se ele tiver `Email` cadastrado), via `StatusOrdemAlteradoEventHandler`.
+- `IEmailService` (`OficinaMecanica.Application.Interfaces`) e implementado por `SmtpEmailService` (`OficinaMecanica.Infrastructure.Services`, pacote `MailKit`) — sem provedor externo (SendGrid, Mailgun, etc.), fala SMTP direto com um servidor configurado via `Smtp:Host`/`Smtp:Port`/`Smtp:Remetente`.
+- Resiliente de proposito: qualquer falha (SMTP fora do ar, e-mail mal formado, timeout de 5s) e apenas logada como Warning, nunca lanca excecao — o handler roda de forma sincrona dentro do `SaveChangesAsync` (`AppDbContext.cs`), entao uma falha aqui nao pode derrubar a resposta HTTP do endpoint que mudou o status.
+- Sem `Smtp:Host` configurado (default em `appsettings.json`), o envio e apenas ignorado com um Warning — a API funciona normalmente sem SMTP configurado.
+- Dev local: servico `mailpit` no `docker-compose.yml` (UI web em http://localhost:8025 para ver os e-mails capturados, nao entrega nada de verdade para fora).
 
 ## Stack Tecnologica
 

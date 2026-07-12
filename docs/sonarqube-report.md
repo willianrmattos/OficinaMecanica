@@ -1,6 +1,6 @@
 # Relatorio de Qualidade — OficinaMecanica
 
-**Data:** 2026-07-08
+**Data:** 2026-07-12
 **Ferramenta:** SonarQube 10.7.0 Community (container Docker)
 **Projeto:** `oficina-mecanica`
 **Branch:** main
@@ -14,18 +14,20 @@
 |---------------------------|------------|--------|----------------|
 | Quality Gate              | —          | —      | **PASSED (OK)**|
 | Bugs                      | **0**      | A      | OK             |
-| Vulnerabilidades          | **2**      | E      | CRITICO        |
-| Security Hotspots         | **5**      | —      | Atencao        |
+| Vulnerabilidades          | **0**      | A      | OK             |
+| Security Hotspots         | **0**      | —      | Revisados      |
 | Code Smells               | **37**     | A      | Atencao        |
 | Divida Tecnica            | **126 min**| A      | OK             |
-| Cobertura de linhas       | **72,1%**  | —      | Atencao        |
-| Cobertura de branches     | **60,9%**  | —      | Atencao        |
-| Cobertura geral           | **70,6%**  | —      | Atencao        |
-| Duplicacao de codigo      | **1,3%**   | —      | OK             |
-| Testes executados         | **112**    | —      | OK             |
+| Cobertura de linhas       | **79,0%**  | —      | OK             |
+| Cobertura de branches     | **63,7%**  | —      | Atencao        |
+| Cobertura geral           | **77,1%**  | —      | Atencao        |
+| Duplicacao de codigo      | **1,1%**   | —      | OK             |
+| Testes executados         | **124**    | —      | OK             |
 | Falhas nos testes         | **0**      | —      | OK             |
 
 > Rating: **A** (Otimo) · **B** (Bom) · **C** (Regular) · **D** (Ruim) · **E** (Critico)
+
+> Em relacao ao relatorio anterior (2026-07-08): as 2 vulnerabilidades BLOCKER foram investigadas e marcadas como **falso positivo** no SonarQube com justificativa registrada (ver secao 4.1); os 5 security hotspots foram revisados (4 marcados **Safe** por serem decisoes de design ja documentadas ou falso positivo de regra desatualizada, 1 **corrigido de fato** no Dockerfile) e mais 1 hotspot pre-existente (Key Vault) foi identificado e revisado nesta rodada; a cobertura subiu de 70,6% para 77,1% com os testes novos da fase 2 (recusa de orcamento, listagem, canal de e-mail).
 
 ---
 
@@ -33,15 +35,14 @@
 
 | Metrica                   | Valor |
 |---------------------------|-------|
-| Linhas de codigo (NCLOC)  | 3.877 |
-| Total de linhas           | 4.886 |
-| Arquivos analisados       | 155   |
-| Classes                   | 145   |
-| Funcoes/Metodos           | 388   |
-| Complexidade ciclomatica  | 541   |
-| Complexidade cognitiva    | 132   |
+| Linhas de codigo (NCLOC)  | 4.607 |
+| Arquivos analisados       | 175   |
+| Classes                   | 152   |
+| Funcoes/Metodos           | 403   |
+| Complexidade ciclomatica  | 575   |
+| Complexidade cognitiva    | 137   |
 
-> O aumento de arquivos/linhas em relacao ao relatorio anterior (2026-05-05) reflete a chegada dos modulos Terraform em `infra/` (rg, storage, acr, aks, sqldb), que agora tambem sao analisados pelo SonarQube.
+> O aumento em relacao ao relatorio anterior (3.877 NCLOC / 155 arquivos) reflete as 3 funcionalidades novas da fase 2: recusa de orcamento, listagem ordenada/filtrada e notificacao por e-mail (`SmtpEmailService`, `StatusOrdemAlteradoEventHandler`, `IEmailService`). O script `stress/ordens-de-servico-stress.js` (k6) foi excluido da analise (`sonar.exclusions=stress/**`) por nao ser codigo de aplicacao.
 
 ---
 
@@ -51,55 +52,52 @@
 
 | Suite                              | Total  | Passou | Falhou | Erros |
 |------------------------------------|--------|--------|--------|-------|
-| OficinaMecanica.Domain.Tests       | 41     | 41     | 0      | 0     |
-| OficinaMecanica.Application.Tests  | 49     | 49     | 0      | 0     |
-| OficinaMecanica.Integration.Tests  | 22     | 22     | 0      | 0     |
-| **Total**                          | **112**| **112**| **0**  | **0** |
+| OficinaMecanica.Domain.Tests       | 43     | 43     | 0      | 0     |
+| OficinaMecanica.Application.Tests  | 54     | 54     | 0      | 0     |
+| OficinaMecanica.Integration.Tests  | 27     | 27     | 0      | 0     |
+| **Total**                          | **124**| **124**| **0**  | **0** |
+
+> +12 testes em relacao ao relatorio anterior (112 → 124): 2 no Domain (transicao de recusa de orcamento), 5 no Application (handler de recusa + handler do evento de e-mail) e 5 no Integration (recusa via API, listagem ordenada/filtrada, `SmtpEmailService`).
 
 ### 3.2 Cobertura de Codigo (OpenCover — reportada pelo SonarQube)
 
 | Metrica               | Valor  |
 |-----------------------|--------|
-| Cobertura de linhas   | 72,1%  |
-| Cobertura de branches | 60,9%  |
-| Cobertura geral       | 70,6%  |
+| Cobertura de linhas   | 79,0%  |
+| Cobertura de branches | 63,7%  |
+| Cobertura geral       | 77,1%  |
 | Blocos duplicados     | 4      |
-| Densidade duplicacao  | 1,3%   |
+| Densidade duplicacao  | 1,1%   |
 
 ---
 
 ## 4. Issues Encontradas
 
-### 4.1 Vulnerabilidades — 2 issues (Rating E)
+### 4.1 Vulnerabilidades — 0 issues abertas (2 encontradas e resolvidas como falso positivo)
 
-Estas sao as issues mais criticas e devem ser resolvidas imediatamente.
+| Severidade | Regra               | Descricao                                              | Arquivo                              | Resolucao |
+|------------|---------------------|---------------------------------------------------------|--------------------------------------|-----------|
+| BLOCKER    | `csharpsquid:S2115` | Usar uma senha segura ao conectar no banco (campo `Password=` vazio na connection string versionada) | `src/OficinaMecanica.API/appsettings.json` | Falso positivo — o valor vazio e proposital, a senha real vem de `.env`/Secret em runtime, nunca commitada |
+| BLOCKER    | `csharpsquid:S6781` | Chave secreta JWT exposta no codigo                     | `src/OficinaMecanica.Infrastructure/Services/TokenService.cs` | Falso positivo — a chave e lida via `IConfiguration` (`JwtSettings:SecretKey`), nao ha nenhum literal hardcoded no arquivo |
 
-| Severidade | Regra               | Descricao                                              | Arquivo                              |
-|------------|---------------------|---------------------------------------------------------|--------------------------------------|
-| BLOCKER    | `csharpsquid:S2115` | Usar uma senha segura ao conectar no banco (campo `Password=` vazio na connection string versionada) | `src/OficinaMecanica.API/appsettings.json` |
-| BLOCKER    | `csharpsquid:S6781` | Chave secreta JWT exposta no codigo                     | `src/OficinaMecanica.Infrastructure/Services/TokenService.cs` |
+Ambos os achados foram revisados e marcados no SonarQube (`do_transition` → `falsepositive`) com a justificativa acima registrada como comentario na issue.
 
-**Correcao:** Externalizar a chave JWT para variavel de ambiente/Secret Manager. O achado de senha hardcoded do banco em `docker-compose.yml` — presente no relatorio anterior — **ja foi resolvido**: a senha do Azure SQL agora vem de `.env` (fora do Git) via `${SQL_CONNECTION_STRING}`.
+### 4.2 Security Hotspots — 0 pendentes (6 revisados)
 
-### 4.2 Security Hotspots — 5 issues
+| Probabilidade | Descricao                                                        | Arquivo                | Resolucao |
+|----------------|-------------------------------------------------------------------|------------------------|-----------|
+| MEDIUM         | Container Docker pode estar rodando como root                     | `Dockerfile`           | **Corrigido** — adicionado `USER $APP_UID` (usuario nao-root ja disponivel na imagem base) |
+| MEDIUM         | Acesso publico a rede habilitado                                   | `infra/sqldb/main.tf`    | Safe — decisao de design documentada (Azure SQL Database e publico por natureza, controle via firewall rules) |
+| MEDIUM         | Omitir `enable_rbac_authorization` desabilita RBAC                | `infra/keyvault/main.tf` | Safe — falso positivo de regra desatualizada. RBAC ja esta habilitado via `rbac_authorization_enabled` (nome do atributo renomeado no provider `azurerm` v4); a regra do Sonar ainda procura o nome antigo |
+| LOW            | Ausencia de bloco `identity` desabilita Azure Managed Identities  | `infra/acr/main.tf`      | Safe — sem caso de uso hoje (nenhuma feature depende de managed identity nesse recurso) |
+| LOW            | Ausencia de bloco `identity` desabilita Azure Managed Identities  | `infra/sqldb/main.tf`    | Safe — mesmo motivo acima |
+| LOW            | Ausencia de bloco `identity` desabilita Azure Managed Identities  | `infra/storage/main.tf`  | Safe — mesmo motivo acima |
 
-| Probabilidade | Descricao                                                        | Arquivo                |
-|----------------|-------------------------------------------------------------------|------------------------|
-| MEDIUM         | Container Docker pode estar rodando como root                     | `Dockerfile`           |
-| MEDIUM         | Acesso publico a rede habilitado — confirmar se e intencional     | `infra/sqldb/main.tf`    |
-| LOW            | Ausencia de bloco `identity` desabilita Azure Managed Identities  | `infra/acr/main.tf`      |
-| LOW            | Ausencia de bloco `identity` desabilita Azure Managed Identities  | `infra/sqldb/main.tf`    |
-| LOW            | Ausencia de bloco `identity` desabilita Azure Managed Identities  | `infra/storage/main.tf`  |
+> O hotspot do Key Vault nao aparecia no relatorio anterior (5 hotspots) — foi identificado nesta rodada de revisao. Os demais 5 ja eram conhecidos.
 
-> Os 4 hotspots em `infra/` sao novos nesta analise — o SonarQube passou a escanear os modulos Terraform junto com o codigo .NET. O acesso publico do SQL Database e intencional (firewall restrito ao IP do cliente + regra "Allow Azure services", ver `README.md`/`CLAUDE.md`), mas os 3 hotspots de Managed Identity ausente valem uma avaliacao futura.
+### 4.3 Code Smells — 37 issues (sem mudanca em relacao ao relatorio anterior)
 
-**Correcao Dockerfile:** Adicionar `USER` nao-root no final do Dockerfile:
-```dockerfile
-RUN adduser --disabled-password --no-create-home appuser
-USER appuser
-```
-
-### 4.3 Code Smells — 37 issues
+Nenhum code smell novo foi introduzido pelo codigo da fase 2 — os 37 abaixo sao os mesmos do relatorio de 2026-07-08.
 
 #### BLOCKER (1)
 
@@ -121,7 +119,7 @@ USER appuser
 | Regra                    | Descricao                                              | Arquivo              |
 |--------------------------|--------------------------------------------------------|-----------------------|
 | `csharpsquid:S1192`      | Literais repetidos na migration gerada pelo EF Core (`uniqueidentifier` x16, `OrdensDeServico` x6, `nvarchar(200)` x6, `decimal(18,2)` x5, `Clientes`/`datetime2`/`bigint`/`Veiculos` x4 cada) | `Migrations/20260503122341_Initial.cs` |
-| `csharpsquid:S1192`      | Literal `'Troca de Óleo'` repetido 4x — extrair para constante | `OrdemDeServicoBuilder.cs` |
+| `csharpsquid:S1192`      | Literal `'Troca de Óleo'` repetido 5x — extrair para constante | `OrdemDeServicoBuilder.cs` |
 | `csharpsquid:S6605`      | Usar `Exists()` no lugar de `Any()`                    | `Cliente.cs`          |
 | `csharpsquid:S6602`      | Usar `.Find()` no lugar de `.FirstOrDefault()` (x2)    | `OrdemDeServico.cs`   |
 | `external_roslyn:CA1869` | Evitar criar nova instancia de `JsonSerializerOptions` a cada chamada | `ExceptionHandlingMiddleware.cs` |
@@ -143,34 +141,34 @@ USER appuser
 | Dimensao        | Rating | Significado                        |
 |-----------------|--------|-------------------------------------|
 | Confiabilidade  | **A**  | 0 bugs — codigo confiavel          |
-| Seguranca       | **E**  | 2 vulnerabilidades BLOCKER          |
+| Seguranca       | **A**  | 0 vulnerabilidades abertas — as 2 encontradas foram falso positivo, com justificativa registrada |
 | Manutenibilidade| **A**  | Divida tecnica de apenas 0,1%       |
-| Cobertura       | —      | 70,6% (abaixo do recomendado 80%)  |
-| Duplicacao      | —      | 1,3% (concentrada em migration gerada automaticamente) |
+| Cobertura       | —      | 77,1% (branches ainda abaixo do recomendado 80%) |
+| Duplicacao      | —      | 1,1% (concentrada em migration gerada automaticamente) |
 
 ---
 
 ## 6. Pontos Positivos da Analise
 
-- **Zero bugs** detectados pelo Sonar — codigo robusto.
-- **Duplicacao minima (1,3%)**, concentrada inteiramente na migration `20260503122341_Initial.cs` gerada automaticamente pelo EF Core — nao e codigo escrito a mao.
+- **Zero bugs e zero vulnerabilidades abertas** detectados pelo Sonar.
+- **Todos os security hotspots revisados** (6/6) — 1 corrigido de fato (usuario nao-root no Dockerfile), 5 confirmados como decisao de design segura ou falso positivo, cada um com justificativa registrada.
+- **Duplicacao minima (1,1%)**, concentrada quase inteiramente na migration `20260503122341_Initial.cs` gerada automaticamente pelo EF Core — nao e codigo escrito a mao.
 - **Divida tecnica minima** (126 min, ratio 0,1%) — codigo limpo e de facil manutencao.
-- **112 testes passando** sem falhas — suite de testes funcional.
-- **Quality Gate aprovado** — o projeto esta em estado publicavel.
-- **Um dos BLOCKERs do relatorio anterior ja foi corrigido**: a senha do banco saiu do `docker-compose.yml` e passou a vir de `.env` (fora do Git).
-- Separacao clara de responsabilidades (CQRS, DDD, Repository Pattern) reconhecida pelo scanner.
+- **124 testes passando** sem falhas — suite de testes cresceu 12 casos nesta fase sem introduzir nenhum code smell novo.
+- **Quality Gate aprovado**, incluindo os criterios de "new code" (cobertura de codigo novo 83,5%, 0 hotspots pendentes, 0 violacoes novas).
+- Separacao clara de responsabilidades (CQRS, DDD, Repository Pattern, Event Handlers) reconhecida pelo scanner.
 
 ---
 
 ## 7. Plano de Acao
 
-### Prioridade CRITICA (fazer antes do proximo deploy)
+### Concluido nesta rodada
 
-| # | Acao                                                              | Esforco |
+| # | Acao                                                              | Resultado |
 |---|-------------------------------------------------------------------|---------|
-| 1 | Externalizar a chave JWT de `TokenService.cs` para variavel de ambiente/Secret Manager | 15 min |
-| 2 | Adicionar usuario nao-root no `Dockerfile`                        | 5 min   |
-| 3 | Revisar o hotspot do campo `Password=` vazio em `appsettings.json` (ex: mover para User Secrets local em vez de manter o campo no arquivo versionado) | 15 min |
+| ~~1~~ | ~~Externalizar a chave JWT de `TokenService.cs`~~                 | Nao era necessario — falso positivo, a chave ja vinha de `IConfiguration` |
+| ~~2~~ | ~~Adicionar usuario nao-root no `Dockerfile`~~                    | **Feito** — `USER $APP_UID` |
+| ~~3~~ | ~~Revisar o hotspot do campo `Password=` vazio~~                  | Revisado e marcado Safe — comportamento intencional |
 
 ### Prioridade ALTA
 
@@ -180,13 +178,13 @@ USER appuser
 | 5 | Tornar parametros value-type dos controllers anulaveis (S6964)   | 20 min  |
 | 6 | Tornar metodos async no `Program.cs` (S6966, MigrateAsync etc.)  | 15 min  |
 | 7 | Corrigir CS8618 nos construtores EF das entidades do dominio      | 20 min  |
-| 8 | Avaliar necessidade de bloco `identity` (Managed Identity) nos modulos Terraform `acr`, `sqldb`, `storage` | 30 min |
 
 ### Prioridade MEDIA (qualidade)
 
 | # | Acao                                                                    | Esforco |
 |---|-------------------------------------------------------------------------|---------|
-| 9 | Aumentar cobertura de branches para ≥80% (atualmente 60,9%) com cenarios negativos | 2-4h |
-| 10| Substituir `.Any()` por `.Exists()` e `.FirstOrDefault()` por `.Find()` | 15 min |
-| 11| Extrair constantes para os literais repetidos na migration e no `OrdemDeServicoBuilder` | 15 min |
-| 12| Singleton para `JsonSerializerOptions` no middleware de excecoes         | 10 min  |
+| 8 | Aumentar cobertura de branches para ≥80% (atualmente 63,7%) com cenarios negativos | 2-4h |
+| 9 | Substituir `.Any()` por `.Exists()` e `.FirstOrDefault()` por `.Find()` | 15 min |
+| 10| Extrair constantes para os literais repetidos na migration e no `OrdemDeServicoBuilder` | 15 min |
+| 11| Singleton para `JsonSerializerOptions` no middleware de excecoes         | 10 min  |
+| 12| Adicionar scan Trivy + analise SonarQube ao pipeline de CI/CD (ainda nao existe automacao) | — |

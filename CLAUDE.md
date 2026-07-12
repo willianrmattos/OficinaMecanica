@@ -9,8 +9,8 @@ Backend .NET 8 com DDD, Clean Architecture e CQRS (MediatR) para gestao de ofici
 ```
 src/
   OficinaMecanica.Domain/          # Entidades, Value Objects, Enums, Domain Events, Interfaces
-  OficinaMecanica.Application/     # Commands, Queries, Handlers (MediatR), DTOs, Validators (FluentValidation)
-  OficinaMecanica.Infrastructure/  # EF Core (Azure SQL Database), Repositories, JWT Auth, Token Service
+  OficinaMecanica.Application/     # Commands, Queries, Handlers (MediatR), DTOs, Validators (FluentValidation), Event Handlers, Interfaces (ex: IEmailService)
+  OficinaMecanica.Infrastructure/  # EF Core (Azure SQL Database), Repositories, JWT Auth, Token Service, SmtpEmailService (MailKit)
   OficinaMecanica.API/             # Controllers REST, ExceptionHandlingMiddleware, Swagger, Program.cs
 tests/
   OficinaMecanica.Domain.Tests/       # Testes unitarios (entidades, VOs, regras de negocio)
@@ -51,8 +51,8 @@ docker compose up -d
 docker compose build --no-cache api && docker compose up -d
 
 # Analise SonarQube (requer SonarQube UP e token em SONAR_TOKEN)
-# Token em: http://localhost:9000/account/security  |  login: admin / Admin@Sonar2024
-dotnet sonarscanner begin /k:"oficina-mecanica" /n:"OficinaMecanica" /v:"1.0.0" /d:sonar.host.url="http://localhost:9000" /d:sonar.token="$SONAR_TOKEN" /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" /d:sonar.cs.vstest.reportsPaths="**/*.trx"
+# Token em: http://localhost:9000/account/security  |  login: admin / SONAR_ADMIN_PASSWORD (ver .env)
+dotnet sonarscanner begin /k:"oficina-mecanica" /n:"OficinaMecanica" /v:"1.0.0" /d:sonar.host.url="http://localhost:9000" /d:sonar.token="$SONAR_TOKEN" /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" /d:sonar.cs.vstest.reportsPaths="**/*.trx" /d:sonar.exclusions="stress/**"
 dotnet build --no-incremental -c Release
 # (rodar os testes com cobertura acima)
 dotnet sonarscanner end /d:sonar.token="$SONAR_TOKEN"
@@ -80,16 +80,32 @@ dotnet add <projeto> package <pacote> --source https://api.nuget.org/v3/index.js
 
 ```
 Recebida -> EmDiagnostico -> AguardandoAprovacao -> EmExecucao -> Finalizada -> Entregue
+                                    |
+                                    +-> OrcamentoRecusado
 ```
 
-Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, da baixa automatica no estoque das pecas.
+Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, da baixa automatica no estoque das pecas. Ao recusar (`RecusarOrcamento(motivo)`, sem baixa de estoque), a OS vai para `OrcamentoRecusado` — valor `0` no enum `StatusOrdemDeServico` (nao o proximo numero livre) de proposito, pra ordenar abaixo de `Recebida` na listagem padrao sem precisar de mapeamento de prioridade customizado (ver secao "Listagem de Ordens de Servico").
 
 ## Autenticacao
 
 - JWT Bearer com credenciais configuradas em `appsettings.json` (AdminCredentials)
-- Endpoints publicos: consulta OS por numero (`/api/ordens-de-servico/numero/{numero}`) e aprovacao de orcamento (`/api/ordens-de-servico/{id}/aprovar`)
+- Endpoints publicos: consulta OS por numero (`/api/ordens-de-servico/numero/{numero}`), aprovacao (`/api/ordens-de-servico/{id}/aprovar`) e recusa de orcamento (`/api/ordens-de-servico/{id}/recusar`)
 - `/health` e `/metrics` tambem sao anonimos (nao passam por `[Authorize]`, mapeados via `MapHealthChecks`/`MapMetrics` fora do `MapControllers()`) — ver secao "Observabilidade"
 - Demais endpoints exigem token JWT
+
+## Listagem de Ordens de Servico
+
+- `GET /api/ordens-de-servico` sem `filtroStatus` explicito exclui por padrao `Finalizada` e `Entregue` (exclusao logica via filtro de query, sem soft-delete fisico) e ordena por prioridade de status (`EmExecucao > AguardandoAprovacao > EmDiagnostico > Recebida > OrcamentoRecusado`, via `OrderByDescending(Status)` — a numeracao do enum ja reflete essa prioridade), mais antigas primeiro dentro do mesmo status (`ThenBy(DataAbertura)`)
+- Passando `filtroStatus` explicitamente, o filtro sobrepoe a exclusao padrao (continua possivel consultar `Finalizada`/`Entregue` quando pedido)
+- Logica em `OrdemDeServicoRepository.ListarAsync`/`ContarAsync` (namespace `OficinaMecanica.Infrastructure.Repositories`)
+
+## Notificacao por E-mail
+
+- Toda mudanca de status de uma OS dispara e-mail ao cliente (se tiver `Email` cadastrado), via um unico `INotificationHandler<StatusOrdemAlteradoEvent>` (`StatusOrdemAlteradoEventHandler`, `OficinaMecanica.Application.EventHandlers`) — cobre todas as transicoes (aprovacao, recusa, avanco de diagnostico etc.) sem precisar de um handler por evento especifico
+- `IEmailService` (`OficinaMecanica.Application.Interfaces`) implementado por `SmtpEmailService` (`OficinaMecanica.Infrastructure.Services`, pacote `MailKit`) — sem provedor externo (SendGrid/etc), fala SMTP direto com um servidor configurado via `Smtp:Host`/`Smtp:Port`/`Smtp:Remetente`
+- Resiliente de proposito: qualquer falha (SMTP fora do ar, e-mail mal formado, timeout de 5s) e so logada como Warning, nunca lanca excecao — o handler roda de forma sincrona dentro do `SaveChangesAsync` (`AppDbContext.cs`), uma falha aqui nao pode derrubar a resposta HTTP do endpoint que mudou o status
+- Sem `Smtp:Host` configurado (default em `appsettings.json`), o envio e so ignorado com um Warning — a API funciona normalmente sem SMTP configurado (ex: no AKS, onde ainda nao foi configurado)
+- Dev local: servico `mailpit` no `docker-compose.yml` (UI web em `http://localhost:8025` pra ver os e-mails capturados, nao entrega nada de verdade pra fora)
 
 ## Busca de Cliente por Documento
 
@@ -104,6 +120,7 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 - Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra o Azure SQL tambem, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
 - Connection string vem da variavel de ambiente `ConnectionStrings__DefaultConnection`, lida do arquivo `.env` (fora do Git — copiar de `.env.example` e preencher com o `server_fqdn` do `terraform output` e a senha definida em `infra/terraform.tfvars`)
 - `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env` sempre tem precedencia quando rodando via `docker compose`
+- O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `JWT_SECRET_KEY`, `ADMIN_USUARIO`/`ADMIN_SENHA` (login da API), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
 
 ## Observabilidade
 
@@ -115,13 +132,14 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 ## Docker
 
 Servicos no docker compose (`docker compose up -d` sobe todos):
-- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — conecta no Azure SQL Database via `.env`, nao tem mais banco local no compose
+- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — conecta no Azure SQL Database, e le JWT/AdminCredentials/Smtp, todos via `.env` (nao tem mais banco local no compose)
 - **oficinamecanica-sonar**: SonarQube 10 Community, porta 9000
 - **oficinamecanica-sonar-db**: PostgreSQL 15 (banco do SonarQube), interno
 - **oficinamecanica-sonar-setup**: container de inicializacao unica — cria o projeto `oficina-mecanica` e configura a senha do admin no primeiro boot
 - **oficinamecanica-trivy**: scanner de vulnerabilidades (profile `security`, nao sobe com `docker compose up -d`) — ver secao "Analise de Vulnerabilidades" no README
+- **oficinamecanica-mailpit**: servidor SMTP de desenvolvimento (`axllent/mailpit`), captura os e-mails enviados pela API sem entregar de verdade — UI web na porta 8025 (ver secao "Notificacao por E-mail")
 
-Credenciais SonarQube: `admin` / `Admin@Sonar2024`  
+Credenciais SonarQube: `admin` / valor de `SONAR_ADMIN_PASSWORD` no `.env` (default sugerido no `.env.example`: `Admin@Sonar2024`)  
 Dashboard do projeto: `http://localhost:9000/dashboard?id=oficina-mecanica`  
 Relatorio de qualidade: `docs/sonarqube-report.md`
 
