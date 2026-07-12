@@ -28,12 +28,6 @@ variable "aks_cluster_name" {
   default     = "aksfiap"
 }
 
-variable "aks_authorized_ip_ranges" {
-  description = "IPs (CIDR) autorizados a acessar o API server publico do AKS. Lista vazia remove a restricao. Exemplo: [\"203.0.113.5/32\"] para liberar um unico IP."
-  type        = list(string)
-  default     = []
-}
-
 variable "key_vault_name" {
   description = "Nome do Key Vault (modulo keyvault). Globalmente unico."
   type        = string

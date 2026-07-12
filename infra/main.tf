@@ -29,12 +29,11 @@ module "acr" {
 module "aks" {
   source = "./aks"
 
-  location             = module.rg.location
-  resource_group_name  = module.rg.resource_group_name
-  cluster_name         = var.aks_cluster_name
-  acr_id               = module.acr.registry_id
-  authorized_ip_ranges = var.aks_authorized_ip_ranges
-  tags                 = var.tags
+  location            = module.rg.location
+  resource_group_name = module.rg.resource_group_name
+  cluster_name        = var.aks_cluster_name
+  acr_id              = module.acr.registry_id
+  tags                = var.tags
 }
 
 module "keyvault" {

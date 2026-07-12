@@ -385,16 +385,15 @@ push/PR na main
      2. build-and-push-image  (login no Azure via OIDC, build da imagem, push pro ACR
        |                       com as tags <sha-do-commit> e latest)
        v
-     3. deploy-to-aks         (libera IP do runner no API server, kubectl apply nos manifests
-                                + kubectl set image pro <sha-do-commit> + kubectl rollout status,
-                                restaura o IP original no fim)
+     3. deploy-to-aks         (kubectl apply nos manifests + kubectl set image
+                                pro <sha-do-commit> + kubectl rollout status)
 ```
 
 | Job | Quando roda | O que faz |
 |-----|-------------|-----------|
 | `build-and-test` | Todo push ou PR pra `main` | Restore, build, os 3 projetos de teste, publica resultados como Job Summary (`dorny/test-reporter`) e artifact |
 | `build-and-push-image` | So em push direto na `main` | Autentica no Azure (OIDC), publica a imagem no `acrfiap.azurecr.io` com a tag do commit (`github.sha`) e `latest` |
-| `deploy-to-aks` | So em push direto na `main`, apos o job anterior | Libera temporariamente o IP do runner no firewall do API server, aplica os manifests de `k8s/`, atualiza o Deployment pra imagem recem publicada aguardando o rollout, e restaura o firewall original |
+| `deploy-to-aks` | So em push direto na `main`, apos o job anterior | Aplica os manifests de `k8s/` e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
 
 **Autenticacao sem secrets de longa duracao**: os jobs 2 e 3 autenticam no
 Azure via **OIDC** (`infra/github_oidc/`) — o GitHub emite um token de
@@ -406,18 +405,15 @@ Principal armazenado no repositorio; as 3 `variables` do repositorio
 sensiveis — vem dos outputs do Terraform) so identificam pra qual App
 Registration o token deve ser trocado.
 
-**API server com IP restrito** (`infra/terraform.tfvars`,
-`aks_authorized_ip_ranges`): o cluster trava o acesso publico ao API server
-so pro IP de casa — o que bloquearia o runner do GitHub Actions (IP
-dinamico, de fora dessa lista). O job `deploy-to-aks` contorna isso: le a
-lista atual de IPs liberados, adiciona o IP do proprio runner, faz o
-deploy, e restaura a lista original ao final (mesmo se algum passo
-anterior falhar). Isso exige a role `Azure Kubernetes Service Contributor
-Role` (`infra/github_oidc/main.tf`) no Service Principal do GitHub Actions,
-alem da `Cluster Admin Role` ja usada pra buscar o kubeconfig. Cada
-atualizacao do firewall leva alguns minutos pra propagar no Azure, entao o
-job fica mais lento — a alternativa seria deixar o API server sem nenhuma
-trava de IP, o que nao foi a escolha aqui.
+**API server do AKS sem restricao de IP**: nao criei nenhum mecanismo de
+`authorized_ip_ranges` pro cluster — o runner do GitHub Actions e hospedado
+pelo GitHub, com IP dinamico, e nao teria como ser adicionado a uma lista
+fixa sem um passo extra no workflow pra liberar/revogar IP a cada execucao,
+adicionando minutos de espera por deploy pra uma protecao que ja e coberta
+pela autenticacao: sem uma credencial Azure AD valida com a role certa
+(`Cluster Admin Role`, `infra/github_oidc/main.tf`), o IP sozinho nao abre
+o cluster pra ninguem. Restringir por IP so faria sentido com um runner
+self-hosted dentro da mesma rede (VNet) do cluster — fora de escopo aqui.
 
 **Limitacao conhecida**: o job `deploy-to-aks` ainda falha se o cluster AKS
 estiver parado (`az aks stop`, usado pra nao gerar custo ocioso quando o

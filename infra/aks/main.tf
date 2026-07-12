@@ -56,13 +56,6 @@ resource "azurerm_kubernetes_cluster" "this" {
   identity {
     type = "SystemAssigned"
   }
-
-  dynamic "api_server_access_profile" {
-    for_each = length(var.authorized_ip_ranges) > 0 ? [1] : []
-    content {
-      authorized_ip_ranges = var.authorized_ip_ranges
-    }
-  }
 }
 
 resource "azurerm_role_assignment" "acr_pull" {

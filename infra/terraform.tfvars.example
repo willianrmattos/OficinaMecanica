@@ -10,7 +10,6 @@ sql_database_name     = "OficinaMecanicaDb"
 sql_administrator_login = "adminfiap"
 github_repo           = "willianrmattos/OficinaMecanica"
 
-# aks_authorized_ip_ranges    = ["203.0.113.5/32"] # opcional: restringe o acesso ao API server publico a este IP/32
 # sql_client_ip_address       = "203.0.113.5"      # opcional: libera acesso direto ao banco a partir deste IP
 # key_vault_client_ip_address = "203.0.113.5"      # opcional: libera acesso direto ao Key Vault a partir deste IP
 
