@@ -46,6 +46,8 @@ spec:
               value: "1025"
             - name: Smtp__Remetente
               value: "no-reply@oficinamecanica.local"
+            - name: Otel__Endpoint
+              value: "http://jaeger.monitoring.svc.cluster.local:4317"
             - name: ConnectionStrings__DefaultConnection
               valueFrom:
                 secretKeyRef:

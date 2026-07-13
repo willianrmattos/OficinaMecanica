@@ -130,6 +130,7 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 - `GET /metrics`: metricas no formato Prometheus (`prometheus-net.AspNetCore`, `UseHttpMetrics()`/`MapMetrics()`) — contagem/duracao de requests HTTP por padrao. Sem autenticacao.
 - Scrape configurado via `ServiceMonitor` em `k8s/monitoring/servicemonitor.yaml`, apontando pro Prometheus instalado em `infra/helm/monitoring.tf` (kube-prometheus-stack)
 - Logs agregados via Loki + Grafana Alloy (`infra/helm/loki.tf`) — ver secao "Infraestrutura (Terraform / Azure)" pra detalhes
+- Tracing distribuido via Jaeger (`k8s/jaeger/`, modo all-in-one) — API instrumentada com OpenTelemetry .NET (ASP.NET Core + SqlClient), exportando via OTLP. So ativa se `Otel:Endpoint` estiver configurado (mesmo padrao resiliente do `Smtp:Host`); Grafana ja sai com o Jaeger como fonte de dados adicional. Dev local: servico `jaeger` no `docker-compose.yml` (UI web em `http://localhost:16686`)
 
 ## Docker
 
@@ -140,6 +141,7 @@ Servicos no docker compose (`docker compose up -d` sobe todos):
 - **oficinamecanica-sonar-setup**: container de inicializacao unica — cria o projeto `oficina-mecanica` e configura a senha do admin no primeiro boot
 - **oficinamecanica-trivy**: scanner de vulnerabilidades (profile `security`, nao sobe com `docker compose up -d`) — ver secao "Analise de Vulnerabilidades" no README
 - **oficinamecanica-mailpit**: servidor SMTP de desenvolvimento (`axllent/mailpit`), captura os e-mails enviados pela API sem entregar de verdade — UI web na porta 8025 (ver secao "Notificacao por E-mail")
+- **oficinamecanica-jaeger**: tracing distribuido de desenvolvimento (`jaegertracing/all-in-one`), recebe os spans exportados pela API via OTLP — UI web na porta 16686 (ver secao "Observabilidade")
 
 Credenciais SonarQube: `admin` / valor de `SONAR_ADMIN_PASSWORD` no `.env` (default sugerido no `.env.example`: `Admin@Sonar2024`)  
 Dashboard do projeto: `http://localhost:9000/dashboard?id=oficina-mecanica`  
@@ -203,6 +205,7 @@ k8s/
   oficinamecanica-api/   # manifests da API
   monitoring/             # "uso" do Prometheus/Grafana (o que monitorar)
   mailpit/                # SMTP de desenvolvimento (captura os e-mails da API dentro do cluster)
+  jaeger/                 # tracing distribuido, modo all-in-one
 ```
 
 ### `k8s/oficinamecanica-api/`
@@ -277,6 +280,22 @@ na raiz (ver `## Infraestrutura`).
   `k8s/monitoring/ingress.yaml` — a porta 1025 (SMTP) fica so acessivel de
   dentro do cluster, sem sentido expor SMTP num Ingress HTTP.
 
+### `k8s/jaeger/`
+
+- **`deployment.yaml`**: `jaeger` (imagem `jaegertracing/all-in-one`), 1
+  replica, sem persistencia (traces em memoria, aceitavel pro volume baixo
+  de um projeto de estudo) — namespace `monitoring` (agrupado com o resto
+  da observabilidade, diferente do Mailpit, que fica junto da API). Optei
+  por manifest puro (nao um `helm_release` em `infra/helm/`) porque o modo
+  all-in-one e um unico container sem configuracao complexa — o chart
+  oficial do Jaeger e pensado pra instalacoes maiores (Cassandra/
+  Elasticsearch, operator), desproporcional pro que precisamos aqui.
+- **`service.yaml`**: ClusterIP, expoe as portas 4317/4318 (OTLP gRPC/HTTP,
+  usadas pela API pra enviar spans) e 16686 (Jaeger Query UI).
+- **`ingress.yaml`**: expoe so a porta 16686 (UI) via `ingress-nginx`, host
+  nip.io (`jaeger.<ip>.nip.io`) — as portas OTLP ficam so acessiveis de
+  dentro do cluster.
+
 ## CI/CD
 
 `.github/workflows/ci.yml`, 3 jobs sequenciais (`needs:`). Gatilhos:
@@ -297,7 +316,7 @@ mexeu em codigo da aplicacao).
 3. **`deploy-to-aks`**: idem (push ou `workflow_dispatch` na `main`). Autentica via
    `azure/aks-set-context@v4` (`admin: true`, usa contas locais do cluster,
    nao Azure RBAC de autorizacao dentro do Kubernetes), aplica
-   `k8s/oficinamecanica-api/`, `k8s/monitoring/` e `k8s/mailpit/`, e usa
+   `k8s/oficinamecanica-api/`, `k8s/monitoring/`, `k8s/mailpit/` e `k8s/jaeger/`, e usa
    `kubectl set image` apontando pro hash do commit (nao o `:latest` fixo
    do YAML) + `kubectl rollout status` pra confirmar.
 

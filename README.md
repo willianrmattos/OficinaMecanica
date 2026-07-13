@@ -108,6 +108,7 @@ docker compose up -d
 | API + Swagger | http://localhost:5000 | `ADMIN_USUARIO` / `ADMIN_SENHA` (`.env`) |
 | SonarQube | http://localhost:9000 | admin / `SONAR_ADMIN_PASSWORD` (`.env`) |
 | Mailpit (e-mails capturados) | http://localhost:8025 | — |
+| Jaeger (traces distribuidos) | http://localhost:16686 | — |
 
 > A migration e aplicada automaticamente na primeira execucao (contra o Azure SQL configurado no `.env`). O SonarQube leva ~2 minutos para inicializar; o projeto `oficina-mecanica` e criado automaticamente pelo servico `sonar-setup`.
 
@@ -325,6 +326,9 @@ kubectl apply -f k8s/monitoring/
 # Aplica o Mailpit (SMTP de desenvolvimento, dentro do proprio cluster)
 kubectl apply -f k8s/mailpit/
 
+# Aplica o Jaeger (tracing distribuido, dentro do proprio cluster)
+kubectl apply -f k8s/jaeger/
+
 # Acompanha o rollout e confirma que os pods subiram
 kubectl rollout status deployment/oficinamecanica-api
 kubectl get pods
@@ -397,6 +401,21 @@ do cluster).
 
 ```bash
 kubectl apply -f k8s/mailpit/
+```
+
+### `k8s/jaeger/`
+
+| Arquivo | Recurso | Finalidade |
+|---------|---------|------------|
+| `deployment.yaml` | Deployment | Jaeger em modo all-in-one (`jaegertracing/all-in-one`), 1 réplica, traces em memória (sem persistência) |
+| `service.yaml` | Service (ClusterIP) | Portas 4317/4318 (OTLP, usadas pela API) e 16686 (Query UI) |
+| `ingress.yaml` | Ingress | Expõe só a UI (porta 16686) via ingress-nginx, host nip.io |
+
+Recebe os spans que a API exporta via OpenTelemetry (OTLP). Fica no
+namespace `monitoring`
+
+```bash
+kubectl apply -f k8s/jaeger/
 ```
 
 ### Permissões: RBAC do Azure vs. RBAC do Kubernetes
@@ -654,6 +673,6 @@ Os eventos sao publicados pelo `AppDbContext.SaveChangesAsync` via `IMediator.Pu
 | Infra (app) | Docker + Docker Compose | — |
 | Infra (cloud) | Terraform (Azure: AKS, ACR, Key Vault, Azure SQL Database) | — |
 | Orquestracao | Kubernetes (AKS) + Helm (ingress-nginx, kube-prometheus-stack, Loki, Alloy) | — |
-| Observabilidade (cluster) | Prometheus + Grafana (metricas) + Loki + Grafana Alloy (logs) | — |
+| Observabilidade (cluster) | Prometheus + Grafana (metricas) + Loki + Grafana Alloy (logs) + Jaeger (tracing, OpenTelemetry .NET) | — |
 | Qualidade | SonarQube 10 Community | — |
 | Seguranca | Trivy (Aqua Security) | latest |

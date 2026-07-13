@@ -82,3 +82,9 @@ grafana:
       type: loki
       access: proxy
       url: http://${loki_release_name}.${monitoring_namespace}.svc.cluster.local:3100
+    # Jaeger (k8s/jaeger/) - nao e um helm_release (Deployment/Service
+    # aplicados direto via k8s/)
+    - name: Jaeger
+      type: jaeger
+      access: proxy
+      url: http://jaeger.monitoring.svc.cluster.local:16686

@@ -4,6 +4,8 @@ using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.API.Middleware;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using OpenTelemetry.Resources;
+using OpenTelemetry.Trace;
 using Prometheus;
 using Serilog;
 
@@ -21,6 +23,17 @@ builder.Host.UseSerilog();
 // Services
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+
+var otelEndpoint = builder.Configuration["Otel:Endpoint"];
+if (!string.IsNullOrWhiteSpace(otelEndpoint))
+{
+    builder.Services.AddOpenTelemetry()
+        .ConfigureResource(resource => resource.AddService("OficinaMecanica.API"))
+        .WithTracing(tracing => tracing
+            .AddAspNetCoreInstrumentation()
+            .AddSqlClientInstrumentation()
+            .AddOtlpExporter(otlp => otlp.Endpoint = new Uri(otelEndpoint)));
+}
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
