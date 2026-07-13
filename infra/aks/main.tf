@@ -16,11 +16,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   # Habilitei o addon gerenciado do CSI driver (Secrets Store) para montar
   # secrets do infra/keyvault direto como volume no pod. O addon cria uma
   # managed identity propria (secret_identity) - a role assignment que da
-  # permissao dela no Key Vault fica na raiz (infra/aks_keyvault_access.tf),
-  # nao aqui: se ficasse aqui, esse modulo precisaria receber o ID do Key
-  # Vault como entrada, e o modulo keyvault tambem precisa de uma saida deste
-  # modulo (o IP de saida do cluster, pro firewall dele) - as duas coisas
-  # juntas criariam uma dependencia circular entre os dois modulos.
+  # permissao dela no Key Vault fica na raiz (infra/aks_keyvault_access.tf)
   key_vault_secrets_provider {
     secret_rotation_enabled  = true
     secret_rotation_interval = "2m"

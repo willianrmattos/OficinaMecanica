@@ -46,7 +46,16 @@ resource "helm_release" "monitoring" {
 
   values = [
     templatefile("${path.module}/monitoring.yaml.tpl", {
-      storage_class_name = var.storage_class_name
+      storage_class_name   = var.storage_class_name
+      loki_release_name    = var.loki_release_name
+      monitoring_namespace = var.monitoring_namespace
     })
   ]
+
+  # O datasource "Loki" que configurei em monitoring.yaml.tpl
+  # (grafana.additionalDataSources) aponta pro Service que o helm_release.loki
+  # cria - sem essa dependencia explicita, o Terraform poderia tentar
+  # instalar os dois charts em paralelo (a ordem entre helm_release sem
+  # dependencia direta no codigo nao e garantida).
+  depends_on = [helm_release.loki]
 }

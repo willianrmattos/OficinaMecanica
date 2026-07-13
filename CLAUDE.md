@@ -104,8 +104,9 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 - Toda mudanca de status de uma OS dispara e-mail ao cliente (se tiver `Email` cadastrado), via um unico `INotificationHandler<StatusOrdemAlteradoEvent>` (`StatusOrdemAlteradoEventHandler`, `OficinaMecanica.Application.EventHandlers`) — cobre todas as transicoes (aprovacao, recusa, avanco de diagnostico etc.) sem precisar de um handler por evento especifico
 - `IEmailService` (`OficinaMecanica.Application.Interfaces`) implementado por `SmtpEmailService` (`OficinaMecanica.Infrastructure.Services`, pacote `MailKit`) — sem provedor externo (SendGrid/etc), fala SMTP direto com um servidor configurado via `Smtp:Host`/`Smtp:Port`/`Smtp:Remetente`
 - Resiliente de proposito: qualquer falha (SMTP fora do ar, e-mail mal formado, timeout de 5s) e so logada como Warning, nunca lanca excecao — o handler roda de forma sincrona dentro do `SaveChangesAsync` (`AppDbContext.cs`), uma falha aqui nao pode derrubar a resposta HTTP do endpoint que mudou o status
-- Sem `Smtp:Host` configurado (default em `appsettings.json`), o envio e so ignorado com um Warning — a API funciona normalmente sem SMTP configurado (ex: no AKS, onde ainda nao foi configurado)
+- Sem `Smtp:Host` configurado (default em `appsettings.json`), o envio e so ignorado com um Warning — a API funciona normalmente sem SMTP configurado
 - Dev local: servico `mailpit` no `docker-compose.yml` (UI web em `http://localhost:8025` pra ver os e-mails capturados, nao entrega nada de verdade pra fora)
+- AKS: mesmo Mailpit rodando dentro do cluster (`k8s/mailpit/`, imagem `axllent/mailpit`), pra poder demonstrar o fluxo de notificacao por e-mail sem depender de SMTP externo — `k8s/oficinamecanica-api/deployment.yaml` aponta `Smtp__Host`/`Smtp__Port` pro Service `mailpit` (mesmo namespace), UI web exposta via `k8s/mailpit/ingress.yaml` (host nip.io, mesmo padrao do Grafana/Prometheus)
 
 ## Busca de Cliente por Documento
 
@@ -128,6 +129,7 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 - `GET /health`: health check simples (`AddHealthChecks()`/`MapHealthChecks`, sem verificacao de dependencias como banco) — so confirma que o processo esta de pe. Sem autenticacao.
 - `GET /metrics`: metricas no formato Prometheus (`prometheus-net.AspNetCore`, `UseHttpMetrics()`/`MapMetrics()`) — contagem/duracao de requests HTTP por padrao. Sem autenticacao.
 - Scrape configurado via `ServiceMonitor` em `k8s/monitoring/servicemonitor.yaml`, apontando pro Prometheus instalado em `infra/helm/monitoring.tf` (kube-prometheus-stack)
+- Logs agregados via Loki + Grafana Alloy (`infra/helm/loki.tf`) — ver secao "Infraestrutura (Terraform / Azure)" pra detalhes
 
 ## Docker
 
@@ -158,7 +160,7 @@ Terraform (`azurerm` ~> 4.0, `helm` ~> 2.0 e `azuread` ~> 3.0). Raiz
 - **`infra/acr/`**: Container Registry (`acrfiap.azurecr.io`), SKU Standard (free tier)
 - **`infra/aks/`**: cluster AKS (`aksfiap`), 1 node `Standard_D2s_v3` (nao-gratis, usar `az aks stop`/`start` pra nao gerar custo ocioso — mas isso NAO para o IP publico do Load Balancer nem o disco do node, que continuam cobrando mesmo com o cluster parado), Azure CNI Overlay, integrado ao ACR via role assignment `AcrPull`. Tambem tem `oidc_issuer_enabled`, `workload_identity_enabled` e o addon `key_vault_secrets_provider` (CSI Secrets Store driver) habilitados
 - **`infra/keyvault/`**: Key Vault (`kvfiap`), RBAC-based (`rbac_authorization_enabled`), rede restrita por IP (`network_acls`, `default_action = Deny`) + bypass pra servicos Azure confiaveis — libera tanto o IP do cliente quanto o IP de saida do cluster AKS (esse ultimo descoberto automaticamente, ver `infra/aks_keyvault_access.tf` abaixo). Os 3 segredos da aplicacao (`infra/keyvault_secrets.tf`, na raiz) sao sincronizados pro Secret nativo do Kubernetes via CSI Secrets Store driver — ver `k8s/oficinamecanica-api/secret-provider-class.yaml`
-- **`infra/helm/`**: dois `helm_release` — `ingress-nginx` (chart oficial, namespace proprio, Service `LoadBalancer`, com a annotation `azure-load-balancer-health-probe-request-path: /healthz` — sem ela, o health probe do proprio Load Balancer do Azure bate em `GET /`, cai na regra catch-all da API e recebe `301` da Swagger UI em vez de `200`, fazendo o Azure bloquear **todo** trafego externo por considerar o `ingress-nginx` inteiro unhealthy) e `monitoring` (`kube-prometheus-stack`: Prometheus + Grafana + kube-state-metrics + node-exporter, sem Alertmanager, PVCs de 8Gi/4Gi na StorageClass `managed-csi-premium` que o proprio AKS ja cria, dashboards do Grafana como codigo via sidecar). Usa o provider `helm` configurado em `infra/providers.tf` apontando pro `infra/aks` via kube_config
+- **`infra/helm/`**: quatro `helm_release` — `ingress-nginx` (chart oficial, namespace proprio, Service `LoadBalancer`, com a annotation `azure-load-balancer-health-probe-request-path: /healthz` — sem ela, o health probe do proprio Load Balancer do Azure bate em `GET /`, cai na regra catch-all da API e recebe `301` da Swagger UI em vez de `200`, fazendo o Azure bloquear **todo** trafego externo por considerar o `ingress-nginx` inteiro unhealthy), `monitoring` (`kube-prometheus-stack`: Prometheus + Grafana + kube-state-metrics + node-exporter, sem Alertmanager, PVC de 8Gi/4Gi na StorageClass `managed-csi-premium` que o proprio AKS ja cria, dashboards do Grafana como codigo via sidecar), `loki` (agregacao de logs, modo `Monolithic`, PVC de 10Gi na mesma StorageClass, retencao de 72h, chart do repositorio `grafana-community` — ver `infra/helm/loki.tf`) e `alloy` (coleta os logs de cada pod do node e envia pro Loki). Usa o provider `helm` configurado em `infra/providers.tf` apontando pro `infra/aks` via kube_config
 - **`infra/sqldb/`**: Azure SQL Database (`svsfiap.database.windows.net` / `OficinaMecanicaDb`), serverless, tier sempre-gratis. O campo que ativa esse tier (`use_free_limit`) nao existe no provider `azurerm` e nao pode ser setado depois via `az sql db update` (so na criacao) — por isso o banco foi criado via `az sql db create --use-free-limit true --free-limit-exhaustion-behavior AutoPause ...` e depois trazido para o state do Terraform com `terraform import`
 - **`infra/github_oidc/`**: App Registration + Service Principal + Federated Identity Credential (OIDC, restrita a `repo:<owner>/<repo>:ref:refs/heads/main`) usados pelo GitHub Actions pra autenticar no Azure sem nenhum secret de longa duracao. Role assignments `AcrPush` (no `acrfiap`) e `Azure Kubernetes Service Cluster Admin Role` (no `aksfiap`) — ver secao "CI/CD" abaixo
 
@@ -200,6 +202,7 @@ Organizada em subpastas por assunto:
 k8s/
   oficinamecanica-api/   # manifests da API
   monitoring/             # "uso" do Prometheus/Grafana (o que monitorar)
+  mailpit/                # SMTP de desenvolvimento (captura os e-mails da API dentro do cluster)
 ```
 
 ### `k8s/oficinamecanica-api/`
@@ -260,6 +263,20 @@ O Deployment le seus segredos do Key Vault (`infra/keyvault/`) via CSI Secrets
 Store driver — ver `secret-provider-class.yaml` acima e `infra/keyvault_secrets.tf`
 na raiz (ver `## Infraestrutura`).
 
+### `k8s/mailpit/`
+
+- **`deployment.yaml`**: `mailpit` (imagem `axllent/mailpit`), 1 replica —
+  servidor SMTP de desenvolvimento, sem persistencia (mesmo papel que ja
+  tinha no `docker-compose.yml`, so que agora tambem dentro do AKS, pra dar
+  pra demonstrar o fluxo de notificacao por e-mail sem precisar de SMTP
+  externo nem rodar o compose em paralelo).
+- **`service.yaml`**: ClusterIP, expoe as portas 1025 (SMTP, consumida pelo
+  `oficinamecanica-api` via `Smtp__Host: mailpit`) e 8025 (UI web).
+- **`ingress.yaml`**: expoe so a porta 8025 (UI web) via `ingress-nginx`,
+  host nip.io (`mailpit.<ip>.nip.io`), mesmo padrao de
+  `k8s/monitoring/ingress.yaml` — a porta 1025 (SMTP) fica so acessivel de
+  dentro do cluster, sem sentido expor SMTP num Ingress HTTP.
+
 ## CI/CD
 
 `.github/workflows/ci.yml`, 3 jobs sequenciais (`needs:`). Gatilhos:
@@ -280,9 +297,9 @@ mexeu em codigo da aplicacao).
 3. **`deploy-to-aks`**: idem (push ou `workflow_dispatch` na `main`). Autentica via
    `azure/aks-set-context@v4` (`admin: true`, usa contas locais do cluster,
    nao Azure RBAC de autorizacao dentro do Kubernetes), aplica
-   `k8s/oficinamecanica-api/` e `k8s/monitoring/`, e usa `kubectl set image`
-   apontando pro hash do commit (nao o `:latest` fixo do YAML) + `kubectl
-   rollout status` pra confirmar.
+   `k8s/oficinamecanica-api/`, `k8s/monitoring/` e `k8s/mailpit/`, e usa
+   `kubectl set image` apontando pro hash do commit (nao o `:latest` fixo
+   do YAML) + `kubectl rollout status` pra confirmar.
 
 Autenticacao via **OIDC** (`infra/github_oidc/`) — o GitHub emite um token de
 identidade por execucao, sem nenhum secret de longa duracao guardado no

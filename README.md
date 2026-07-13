@@ -209,7 +209,7 @@ Terraform, no diretorio [infra/](infra/), organizada em modulos:
 | `infra/acr` | Azure Container Registry | Registro das imagens Docker da API |
 | `infra/aks` | Azure Kubernetes Service | Orquestracao dos containers em produção |
 | `infra/keyvault` | Azure Key Vault | Armazenamento centralizado de segredos (rede restrita por IP) |
-| `infra/helm` | Helm Releases (ingress-nginx, kube-prometheus-stack) | Ingress Controller e observabilidade (Prometheus + Grafana) |
+| `infra/helm` | Helm Releases (ingress-nginx, kube-prometheus-stack, Loki, Alloy) | Ingress Controller e observabilidade (metricas via Prometheus + Grafana, logs via Loki + Alloy) |
 | `infra/sqldb` | Azure SQL Database | Banco de dados relacional gerenciado (tier serverless) |
 | `infra/github_oidc` | Azure AD App Registration + Federated Identity Credential | Autenticacao do GitHub Actions no Azure via OIDC, sem secrets de longa duracao (ver secao [CI/CD](#cicd)) |
 
@@ -284,6 +284,22 @@ ignorado pelo Git).
 > e permissoes de RBAC do Kubernetes — nada disso precisou ser escrito na
 > mao, so configurado via `infra/helm/monitoring.yaml.tpl`.
 
+> **Logs agregados via Loki + Grafana Alloy** (`infra/helm/loki.tf`):
+>
+> | Componente | Finalidade |
+> |------------|------------|
+> | Loki | Armazena e indexa os logs (modo `Monolithic` — um unico binario, sem os componentes read/write/backend separados do modo distribuido, que so fariam sentido em escala maior) |
+> | Grafana Alloy | Le o log de cada container do node (DaemonSet, 1 pod ja que o cluster tem 1 node so) e envia pro Loki |
+>
+> O Loki roda com storage em filesystem (PVC de
+> 10Gi na mesma StorageClass do Prometheus/Grafana, sem object storage tipo
+> Azure Blob Storage) e retencao de 72h — mais longa que as 6h do Prometheus
+> Caches de chunks/resultados do Loki (baseados em Memcached) e o canary de
+> teste E2E ficam desabilitados de proposito: o cluster tem 1 node so
+> (`Standard_D2s_v3`, 2 vCPU/8GiB), e cada um desses componentes adicionaria
+> outro Pod competindo pelo mesmo recurso escasso, sem necessidade real no
+> volume de log baixo deste projeto.
+
 ## Kubernetes
 
 Os manifests da aplicacao ficam no diretorio [k8s/](k8s/), organizados por
@@ -305,6 +321,9 @@ kubectl apply -f k8s/oficinamecanica-api/
 
 # Aplica os manifests de observabilidade (ServiceMonitor, dashboards, Ingress do Grafana/Prometheus)
 kubectl apply -f k8s/monitoring/
+
+# Aplica o Mailpit (SMTP de desenvolvimento, dentro do proprio cluster)
+kubectl apply -f k8s/mailpit/
 
 # Acompanha o rollout e confirma que os pods subiram
 kubectl rollout status deployment/oficinamecanica-api
@@ -347,6 +366,37 @@ pelo IP público do ingress-nginx:
 ```bash
 kubectl get svc -n ingress-nginx ingress-nginx-controller   # copiar o EXTERNAL-IP
 kubectl apply -f k8s/monitoring/
+```
+
+**Acessando o Grafana**: o chart gera uma senha aleatoria pro usuario
+`admin` a cada instalacao (nao fica hardcoded em lugar nenhum, nem no
+`.tf`/state) — pra recuperar o valor atual:
+
+```bash
+kubectl get secret monitoring-grafana -n monitoring -o jsonpath="{.data.admin-password}" | base64 -d
+```
+
+Login em `http://grafana.<IP-DO-INGRESS>.nip.io` (ou via `kubectl port-forward
+-n monitoring svc/monitoring-grafana 3000:80`, depois `http://localhost:3000`),
+usuario `admin` + a senha do comando acima.
+
+### `k8s/mailpit/`
+
+| Arquivo | Recurso | Finalidade |
+|---------|---------|------------|
+| `deployment.yaml` | Deployment | Servidor SMTP de desenvolvimento (`axllent/mailpit`), 1 réplica, sem persistência |
+| `service.yaml` | Service (ClusterIP) | Porta 1025 (SMTP, usada pela API) e 8025 (UI web) |
+| `ingress.yaml` | Ingress | Expõe só a UI web (porta 8025) via ingress-nginx, host nip.io |
+
+Mesmo papel que o serviço `mailpit` do `docker-compose.yml`, só que rodando
+dentro do próprio cluster — permite demonstrar o fluxo de notificação por
+e-mail (ver [Notificação por E-mail](#notificacao-por-e-mail)) direto no AKS,
+sem precisar rodar o Docker Compose em paralelo. `k8s/oficinamecanica-api/deployment.yaml`
+já aponta `Smtp__Host: mailpit` (mesmo namespace, resolvido pelo DNS interno
+do cluster).
+
+```bash
+kubectl apply -f k8s/mailpit/
 ```
 
 ### Permissões: RBAC do Azure vs. RBAC do Kubernetes
@@ -586,6 +636,7 @@ Os eventos sao publicados pelo `AppDbContext.SaveChangesAsync` via `IMediator.Pu
 - Resiliente de proposito: qualquer falha (SMTP fora do ar, e-mail mal formado, timeout de 5s) e apenas logada como Warning, nunca lanca excecao — o handler roda de forma sincrona dentro do `SaveChangesAsync` (`AppDbContext.cs`), entao uma falha aqui nao pode derrubar a resposta HTTP do endpoint que mudou o status.
 - Sem `Smtp:Host` configurado (default em `appsettings.json`), o envio e apenas ignorado com um Warning — a API funciona normalmente sem SMTP configurado.
 - Dev local: servico `mailpit` no `docker-compose.yml` (UI web em http://localhost:8025 para ver os e-mails capturados, nao entrega nada de verdade para fora).
+- AKS: mesmo Mailpit rodando dentro do proprio cluster ([k8s/mailpit/](k8s/mailpit/)), pra demonstrar o fluxo de notificacao sem depender de SMTP externo nem rodar o Docker Compose em paralelo (ver secao [Kubernetes](#kubernetes)).
 
 ## Stack Tecnologica
 
@@ -602,7 +653,7 @@ Os eventos sao publicados pelo `AppDbContext.SaveChangesAsync` via `IMediator.Pu
 | Testes | xUnit + FluentAssertions + Moq + Bogus | 2.4.2 / 6.12.0 / 4.20.70 / 35.6.1 |
 | Infra (app) | Docker + Docker Compose | — |
 | Infra (cloud) | Terraform (Azure: AKS, ACR, Key Vault, Azure SQL Database) | — |
-| Orquestracao | Kubernetes (AKS) + Helm (ingress-nginx, kube-prometheus-stack) | — |
-| Observabilidade (cluster) | Prometheus + Grafana | — |
+| Orquestracao | Kubernetes (AKS) + Helm (ingress-nginx, kube-prometheus-stack, Loki, Alloy) | — |
+| Observabilidade (cluster) | Prometheus + Grafana (metricas) + Loki + Grafana Alloy (logs) | — |
 | Qualidade | SonarQube 10 Community | — |
 | Seguranca | Trivy (Aqua Security) | latest |

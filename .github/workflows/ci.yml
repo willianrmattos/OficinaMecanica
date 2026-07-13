@@ -137,6 +137,7 @@ jobs:
         run: |
           kubectl apply -f k8s/oficinamecanica-api/
           kubectl apply -f k8s/monitoring/
+          kubectl apply -f k8s/mailpit/
 
       # Optei por kubectl set image (em vez de editar o deployment.yaml
       # direto) para apontar pra tag do commit especifico que acabou de ser

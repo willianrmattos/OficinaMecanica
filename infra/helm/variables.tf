@@ -35,7 +35,31 @@ variable "monitoring_chart_version" {
 }
 
 variable "storage_class_name" {
-  description = "Nome da StorageClass usada pelos PVCs do Prometheus/Grafana. Default (na raiz) e a StorageClass Premium que o proprio AKS ja cria (disk.csi.azure.com, Premium_LRS, reclaimPolicy Delete)."
+  description = "Nome da StorageClass usada pelos PVCs do Prometheus/Grafana/Loki. Default (na raiz) e a StorageClass Premium que o proprio AKS ja cria (disk.csi.azure.com, Premium_LRS, reclaimPolicy Delete)."
   type        = string
   default     = "managed-csi-premium"
+}
+
+variable "loki_release_name" {
+  description = "Nome do Helm release do Loki."
+  type        = string
+  default     = "loki"
+}
+
+variable "loki_chart_version" {
+  description = "Versao do chart loki."
+  type        = string
+  default     = "18.4.4"
+}
+
+variable "alloy_release_name" {
+  description = "Nome do Helm release do Grafana Alloy (coleta os logs dos pods e envia pro Loki."
+  type        = string
+  default     = "alloy"
+}
+
+variable "alloy_chart_version" {
+  description = "Versao do chart alloy, repositorio oficial da Grafana. Fixei na versao confirmada instalada, mesmo motivo dos demais chart_version deste modulo."
+  type        = string
+  default     = "1.10.1"
 }

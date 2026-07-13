@@ -73,3 +73,12 @@ grafana:
       label: grafana_dashboard
       labelValue: "1"
       searchNamespace: ALL
+
+  # Loki (infra/helm/loki.tf) como fonte de dados de logs, direto pelo nome
+  # DNS interno do Service (mesmo namespace "monitoring") - sem gateway na
+  # frente, entao aponto direto pra porta 3100 do singleBinary.
+  additionalDataSources:
+    - name: Loki
+      type: loki
+      access: proxy
+      url: http://${loki_release_name}.${monitoring_namespace}.svc.cluster.local:3100

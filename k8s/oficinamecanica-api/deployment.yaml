@@ -40,6 +40,12 @@ spec:
               value: "60"
             - name: AdminCredentials__Usuario
               value: "admin"
+            - name: Smtp__Host
+              value: "mailpit"
+            - name: Smtp__Port
+              value: "1025"
+            - name: Smtp__Remetente
+              value: "no-reply@oficinamecanica.local"
             - name: ConnectionStrings__DefaultConnection
               valueFrom:
                 secretKeyRef:
