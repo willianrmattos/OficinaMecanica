@@ -10,9 +10,15 @@ Person(admin, "Administrador", "Usuario autenticado com JWT")
 Person_Ext(cliente, "Cliente Final", "Acesso anonimo a endpoints publicos")
 System_Ext(smtp, "Servidor SMTP", "Mailpit (dev) - notificacoes de status por e-mail")
 
-System_Boundary(oficina, "OficinaMecanica") {
-    Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. Valida entradas com FluentValidation. Emite logs via Serilog. Porta 5000.")
+System_Boundary(oficina, "OficinaMecanica (AKS)") {
+    Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. Valida entradas com FluentValidation. Emite metricas (prometheus-net), logs (Serilog) e traces (OpenTelemetry). Escalada de 2 a 5 replicas via HPA.")
     ContainerDb(db, "OficinaMecanicaDb", "Azure SQL Database", "Persiste clientes, veiculos, servicos, pecas, ordens de servico e historico de status. Concorrencia otimista com ConcurrencyToken. Tier serverless sempre-gratis.")
+
+    Container(prometheus, "Prometheus", "kube-prometheus-stack", "Coleta e armazena metricas via scrape periodico do endpoint /metrics.")
+    Container(grafana, "Grafana", "kube-prometheus-stack", "Dashboards e consulta unificada de metricas, logs e traces.")
+    Container(loki, "Loki", "Modo Monolithic", "Armazena e indexa os logs agregados dos pods.")
+    Container(alloy, "Grafana Alloy", "DaemonSet", "Le o log de cada container do node e envia pro Loki.")
+    Container(jaeger, "Jaeger", "All-in-one", "Recebe e armazena os traces distribuidos exportados pela API via OTLP.")
 }
 
 Rel(admin, api, "Chama endpoints administrativos", "HTTPS / REST / JWT Bearer")
@@ -20,5 +26,14 @@ Rel(cliente, api, "Consulta OS e aprova ou recusa orcamento", "HTTPS / REST (ano
 Rel(api, db, "Le e escreve via EF Core", "TCP 1433 / TDS")
 Rel(api, smtp, "Envia notificacao a cada mudanca de status", "SMTP (MailKit)")
 Rel(smtp, cliente, "Entrega notificacao", "E-mail")
+
+Rel(prometheus, api, "Coleta metricas via scrape", "HTTP /metrics")
+Rel(alloy, api, "Le os logs do container", "arquivo de log do node")
+Rel(alloy, loki, "Envia logs coletados", "HTTP")
+Rel(api, jaeger, "Exporta spans de tracing", "OTLP / gRPC")
+Rel(grafana, prometheus, "Consulta metricas", "PromQL")
+Rel(grafana, loki, "Consulta logs", "LogQL")
+Rel(grafana, jaeger, "Consulta traces", "HTTP")
+Rel(admin, grafana, "Visualiza dashboards, logs e traces", "HTTPS")
 
 @enduml
