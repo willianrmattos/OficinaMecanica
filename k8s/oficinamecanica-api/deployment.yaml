@@ -9,6 +9,17 @@ spec:
   # controlada pelo HorizontalPodAutoscaler (k8s/oficinamecanica-api/hpa.yaml),
   # entre minReplicas e maxReplicas.
   replicas: 2
+  # maxSurge: 0 porque o node unico do cluster (infra/aks) nao tem CPU sobrando
+  # pra criar um pod extra durante o rollout (o padrao do Kubernetes, 25%,
+  # arredonda pra +1 pod pra cima da contagem atual) - isso fazia o
+  # "Deploy new image" do CI/CD (.github/workflows/ci.yml) travar esperando um
+  # pod novo que nunca conseguia ser agendado (Insufficient cpu). Com
+  # maxSurge: 0, o rollout derruba um pod antigo antes de criar o novo, nunca
+  # excedendo a contagem atual de replicas.
+  strategy:
+    rollingUpdate:
+      maxSurge: 0
+      maxUnavailable: 1
   selector:
     matchLabels:
       app: oficinamecanica-api
