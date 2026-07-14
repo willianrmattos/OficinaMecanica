@@ -5,10 +5,13 @@ services:
       dockerfile: Dockerfile
     image: oficinamecanica-api:latest
     container_name: oficinamecanica-api
+    depends_on:
+      sqlserver:
+        condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
-      ConnectionStrings__DefaultConnection: "${SQL_CONNECTION_STRING}"
+      ConnectionStrings__DefaultConnection: "Server=tcp:sqlserver,1433;Database=OficinaMecanicaDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
       JwtSettings__SecretKey: "${JWT_SECRET_KEY}"
       JwtSettings__Issuer: "OficinaMecanica.API"
       JwtSettings__Audience: "OficinaMecanica.Client"
@@ -21,6 +24,25 @@ services:
       Otel__Endpoint: "http://jaeger:4317"
     ports:
       - "5000:8080"
+
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: oficinamecanica-sqlserver
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${MSSQL_SA_PASSWORD}"
+      MSSQL_PID: "Developer"
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
 
   mailpit:
     image: axllent/mailpit:latest
@@ -36,6 +58,54 @@ services:
       COLLECTOR_OTLP_ENABLED: "true"
     ports:
       - "16686:16686"
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: oficinamecanica-prometheus
+    volumes:
+      - ./local/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:latest
+    container_name: oficinamecanica-loki
+    command: ["-config.file=/etc/loki/loki-config.yaml"]
+    volumes:
+      - ./local/loki-config.yaml:/etc/loki/loki-config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "3100:3100"
+    restart: unless-stopped
+
+  alloy:
+    image: grafana/alloy:latest
+    container_name: oficinamecanica-alloy
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.river"]
+    volumes:
+      - ./local/alloy-config.river:/etc/alloy/config.river:ro
+      - //var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: oficinamecanica-grafana
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: "${GRAFANA_ADMIN_PASSWORD}"
+    volumes:
+      - ./local/grafana-datasources.yml:/etc/grafana/provisioning/datasources/datasources.yml:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
     restart: unless-stopped
 
   sonarqube:
@@ -125,6 +195,10 @@ services:
         echo "    Login: admin / $$SONAR_ADMIN_PASSWORD"
 
 volumes:
+  sqlserver_data:
+  prometheus_data:
+  loki_data:
+  grafana_data:
   sonarqube_data:
   sonarqube_extensions:
   sonarqube_logs:

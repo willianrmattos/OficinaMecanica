@@ -85,14 +85,15 @@ O dominio de oficina mecanica exige **consistencia transacional forte**: ao apro
 
 ### Com Docker (recomendado)
 
-O banco de dados nao roda em container: a API se conecta a um Azure SQL
-Database gerenciado na nuvem. Antes de subir o compose, copie `.env.example`
-para `.env` e preencha as variaveis (nenhuma credencial fica hardcoded no
+O banco de dados roda em container tambem (`sqlserver`, imagem oficial da
+Microsoft). Antes de subir o compose, copie `.env.example` para
+`.env` e preencha as variaveis (nenhuma credencial fica hardcoded no
 `docker-compose.yml`, que e versionado):
 
 | Variavel | Uso |
 |---|---|
-| `SQL_CONNECTION_STRING` | Connection string do Azure SQL Database (servidor e senha, ver secao [Infraestrutura](#infraestrutura)) |
+| `MSSQL_SA_PASSWORD` | Senha do usuario `sa` do SQL Server local (container `sqlserver`) |
+| `GRAFANA_ADMIN_PASSWORD` | Senha do usuario `admin` do Grafana local (container `grafana`) |
 | `JWT_SECRET_KEY` | Chave usada para assinar os tokens JWT |
 | `ADMIN_USUARIO` / `ADMIN_SENHA` | Credenciais de login da API (`POST /api/auth/login`) |
 | `SONAR_DB_USER` / `SONAR_DB_PASSWORD` | Credenciais do Postgres interno do SonarQube |
@@ -109,8 +110,14 @@ docker compose up -d
 | SonarQube | http://localhost:9000 | admin / `SONAR_ADMIN_PASSWORD` (`.env`) |
 | Mailpit (e-mails capturados) | http://localhost:8025 | — |
 | Jaeger (traces distribuidos) | http://localhost:16686 | — |
+| Prometheus | http://localhost:9090 | — |
+| Grafana | http://localhost:3000 | admin / `GRAFANA_ADMIN_PASSWORD` (`.env`) |
 
-> A migration e aplicada automaticamente na primeira execucao (contra o Azure SQL configurado no `.env`). O SonarQube leva ~2 minutos para inicializar; o projeto `oficina-mecanica` e criado automaticamente pelo servico `sonar-setup`.
+> A migration e aplicada automaticamente na primeira execucao.
+> O SonarQube leva ~2 minutos para inicializar; o projeto `oficina-mecanica`
+> e criado automaticamente pelo servico `sonar-setup`. Grafana ja sai com
+> Prometheus, Loki e Jaeger provisionados como fontes de dados
+> (`local/grafana-datasources.yml`) — use a aba **Explore** pra consultar.
 
 O servico `trivy` usa o profile `security` e nao e iniciado pelo `docker compose up -d`:
 

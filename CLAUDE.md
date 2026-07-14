@@ -19,6 +19,7 @@ tests/
   OficinaMecanica.Tests.Common/       # Builders de entidades com Bogus, compartilhados por Domain.Tests e Application.Tests
 infra/                                  # Infraestrutura como codigo (Terraform / Azure) - ver secao "Infraestrutura (Terraform / Azure)"
 k8s/                                    # Manifests Kubernetes (Deployment, Service, Ingress, HPA) - ver secao "Kubernetes"
+local/                                  # Configs da stack de observabilidade do docker-compose (Prometheus, Loki, Alloy, Grafana) - ver secao "Docker"
 ```
 
 ## Convencoes
@@ -116,12 +117,14 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 
 ## Banco de Dados
 
-- SQL Server via EF Core — hoje aponta pra um **Azure SQL Database** real (`svsfiap.database.windows.net`, tier serverless sempre-gratis, provisionado via `infra/sqldb/`), nao mais um container local
+- SQL Server via EF Core — o banco em si difere entre ambientes, sem nenhuma mudanca no codigo da aplicacao (so a connection string muda):
+  - **AKS/producao**: **Azure SQL Database** real (`svsfiap.database.windows.net`, tier serverless sempre-gratis, provisionado via `infra/sqldb/`), connection string sincronizada do Key Vault (ver secao "Kubernetes")
+  - **Docker Compose/desenvolvimento local**: container `sqlserver` (`mcr.microsoft.com/mssql/server:2022-latest`, edicao Developer) no proprio `docker-compose.yml`, com volume nomeado (`sqlserver_data`) pra persistir entre `docker compose down`/`up` — optei por rodar local em vez de sempre depender do Azure SQL estar acessivel/acordado (tier serverless com auto-pause), so pra desenvolver
 - Configurations em `Infrastructure/Data/Configurations/`
-- Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra o Azure SQL tambem, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
-- Connection string vem da variavel `SQL_CONNECTION_STRING` no `.env` (fora do Git — copiar de `.env.example` e preencher com o `sql_server_fqdn` do `terraform output` e a senha definida em `infra/terraform.tfvars`), que o `docker-compose.yml` repassa ao container como `ConnectionStrings__DefaultConnection`
-- `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env` sempre tem precedencia quando rodando via `docker compose`
-- O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `JWT_SECRET_KEY`, `ADMIN_USUARIO`/`ADMIN_SENHA` (login da API), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
+- Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra qualquer um dos dois bancos acima, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
+- No Docker Compose, a connection string do `sqlserver` local e montada direto no `docker-compose.yml` (usuario `sa`, senha vinda de `MSSQL_SA_PASSWORD` no `.env`) — nao ha mais dependencia do Azure SQL pra desenvolvimento local
+- `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env`/`docker-compose.yml` sempre tem precedencia quando rodando via `docker compose`
+- O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `MSSQL_SA_PASSWORD` (SQL Server local), `GRAFANA_ADMIN_PASSWORD` (Grafana local), `JWT_SECRET_KEY`, `ADMIN_USUARIO`/`ADMIN_SENHA` (login da API), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
 
 ## Observabilidade
 
@@ -131,17 +134,24 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 - Scrape configurado via `ServiceMonitor` em `k8s/monitoring/servicemonitor.yaml`, apontando pro Prometheus instalado em `infra/helm/monitoring.tf` (kube-prometheus-stack)
 - Logs agregados via Loki + Grafana Alloy (`infra/helm/loki.tf`) — ver secao "Infraestrutura (Terraform / Azure)" pra detalhes
 - Tracing distribuido via Jaeger (`k8s/jaeger/`, modo all-in-one) — API instrumentada com OpenTelemetry .NET (ASP.NET Core + SqlClient), exportando via OTLP. So ativa se `Otel:Endpoint` estiver configurado (mesmo padrao resiliente do `Smtp:Host`); Grafana ja sai com o Jaeger como fonte de dados adicional. Dev local: servico `jaeger` no `docker-compose.yml` (UI web em `http://localhost:16686`)
+- Dev local: stack completa de observabilidade tambem no `docker-compose.yml` (Prometheus + Loki + Alloy + Grafana, servicos `prometheus`/`loki`/`alloy`/`grafana`), equivalente ao que roda no AKS via `infra/helm/`. Grafana local ja sai com Prometheus, Loki e Jaeger provisionados como datasources automaticamente (`local/grafana-datasources.yml`) — UI web em `http://localhost:3000` (login `admin` / `GRAFANA_ADMIN_PASSWORD`)
+- **Cuidado com a app "Traces Drilldown"** do Grafana (menu lateral, instalada automaticamente como plugin): so funciona com datasource Tempo, nao reconhece datasource Jaeger — pra ver traces, usar a aba **Explore** (icone de bussola) normal, selecionando o datasource Jaeger manualmente
 
 ## Docker
 
 Servicos no docker compose (`docker compose up -d` sobe todos):
-- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — conecta no Azure SQL Database, e le JWT/AdminCredentials/Smtp, todos via `.env` (nao tem mais banco local no compose)
+- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — le SQL/JWT/AdminCredentials/Smtp/Otel, todos via `.env`
+- **oficinamecanica-sqlserver**: SQL Server 2022 (edicao Developer), banco local — separado do Azure SQL Database usado em producao/AKS, que continua intacto (ver secao "Banco de Dados")
 - **oficinamecanica-sonar**: SonarQube 10 Community, porta 9000
 - **oficinamecanica-sonar-db**: PostgreSQL 15 (banco do SonarQube), interno
 - **oficinamecanica-sonar-setup**: container de inicializacao unica — cria o projeto `oficina-mecanica` e configura a senha do admin no primeiro boot
 - **oficinamecanica-trivy**: scanner de vulnerabilidades (profile `security`, nao sobe com `docker compose up -d`) — ver secao "Analise de Vulnerabilidades" no README
 - **oficinamecanica-mailpit**: servidor SMTP de desenvolvimento (`axllent/mailpit`), captura os e-mails enviados pela API sem entregar de verdade — UI web na porta 8025 (ver secao "Notificacao por E-mail")
 - **oficinamecanica-jaeger**: tracing distribuido de desenvolvimento (`jaegertracing/all-in-one`), recebe os spans exportados pela API via OTLP — UI web na porta 16686 (ver secao "Observabilidade")
+- **oficinamecanica-prometheus**: Prometheus, coleta metricas via scrape de `api:8080/metrics` (config em `local/prometheus.yml`) — porta 9090
+- **oficinamecanica-loki**: Loki (config em `local/loki-config.yaml`, mesmos parametros do `infra/helm/loki.yaml.tpl` usado no AKS), porta 3100
+- **oficinamecanica-alloy**: Grafana Alloy, versao local do `infra/helm/alloy.yaml.tpl` — em vez de ler arquivo de log do node (impossivel fora do Kubernetes), le os logs de todos os containers direto da API do Docker (`discovery.docker`/`loki.source.docker`, config em `local/alloy-config.river`), via socket do Docker montado
+- **oficinamecanica-grafana**: Grafana, ja com Prometheus/Loki/Jaeger provisionados como datasources automaticamente (`local/grafana-datasources.yml`, montado em `/etc/grafana/provisioning/datasources/`) — porta 3000, login `admin` / `GRAFANA_ADMIN_PASSWORD` (`.env`)
 
 Credenciais SonarQube: `admin` / valor de `SONAR_ADMIN_PASSWORD` no `.env` (default sugerido no `.env.example`: `Admin@Sonar2024`)  
 Dashboard do projeto: `http://localhost:9000/dashboard?id=oficina-mecanica`  
