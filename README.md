@@ -207,181 +207,19 @@ Relatorio detalhado: [docs/trivy-report.md](docs/trivy-report.md)
 
 ## Infraestrutura
 
-A infraestrutura de nuvem do projeto e provisionada como codigo com
-Terraform, no diretorio [infra/](infra/), organizada em modulos:
+A infraestrutura de nuvem do projeto (Terraform, todos os modulos Azure,
+API Gateway) migrados pra um
+repositorio proprio, [OficinaMecanica.Infra](../OficinaMecanica.Infra),
+pra centralizar a infra de todos os futuros servicos/APIs num unico lugar
+em vez de cada repo de codigo carregar
+seu proprio `infra/`. A migracao foi so de realocacao de arquivos — mesmo
+backend de state remoto.
 
-| Modulo | Recurso Azure | Finalidade |
-|--------|---------------|------------|
-| `infra/rg` | Resource Group | Agrupa todos os recursos do projeto |
-| `infra/storage` | Storage Account | Backend remoto do state do Terraform |
-| `infra/acr` | Azure Container Registry | Registro das imagens Docker da API |
-| `infra/aks` | Azure Kubernetes Service | Orquestracao dos containers em produção |
-| `infra/keyvault` | Azure Key Vault | Armazenamento centralizado de segredos (rede restrita por IP) |
-| `infra/helm` | Helm Releases (ingress-nginx, kube-prometheus-stack, Loki, Alloy) | Ingress Controller e observabilidade (metricas via Prometheus + Grafana, logs via Loki + Alloy) |
-| `infra/sqldb` | Azure SQL Database | Banco de dados relacional gerenciado (tier serverless) |
-| `infra/github_oidc` | Azure AD App Registration + Federated Identity Credential | Autenticacao do GitHub Actions no Azure via OIDC, sem secrets de longa duracao (ver secao [CI/CD](#cicd)) |
-| `infra/apim` | Azure API Management (Consumption) | Gateway de API na frente do `ingress-nginx` (ver [API Gateway](#api-gateway) abaixo) |
-
-Dois arquivos na raiz de `infra/` (`keyvault_secrets.tf`, `aks_keyvault_access.tf`)
-conectam modulos entre si sem criar dependencia circular entre eles - cada
-um precisa enxergar dois modulos ao mesmo tempo, o que so e possivel na raiz.
-
-### Provisionando a infraestrutura
-
-Pre-requisitos: [Terraform](https://developer.hashicorp.com/terraform/install) >= 1.5, Azure CLI autenticado (`az login`) com permissao na assinatura.
-
-```bash
-cd infra
-cp terraform.tfvars.example terraform.tfvars   # preencher os valores (nomes de recursos, regiao, etc.)
-
-# Variaveis sensiveis nao tem default em terraform.tfvars.example de proposito
-# (nunca commitadas) - definir via variavel de ambiente antes do apply:
-export TF_VAR_sql_administrator_login_password="<senha-forte>"
-export TF_VAR_jwt_secret_key="<chave-forte>"
-export TF_VAR_admin_senha="<senha-forte>"
-export TF_VAR_apim_publisher_email="<seu-email>"
-
-terraform init
-terraform plan    # revisar o que sera criado/alterado antes de aplicar
-terraform apply
-```
-
-> **Nota sobre o backend remoto**: o state fica em uma Storage Account
-> (`infra/storage`, ver `infra/backend.tf`) que e ela mesma criada pelo
-> Terraform — na pratica isso significa que a primeira vez que o projeto foi
-> provisionado precisou de um bootstrap (aplicar `module.storage` com state
-> local antes de configurar o backend remoto). Como a storage account ja
-> existe hoje, um `terraform init` normal e suficiente para quem for rodar a
-> partir daqui.
-
-O `terraform apply` cria todos os 9 modulos na ordem correta de dependencias
-(o proprio Terraform monta esse grafo a partir das referencias entre
-`module.*`, sem precisar de flags especiais) — do Resource Group ate o
-cluster AKS, Key Vault e a federacao OIDC do GitHub Actions. Para aplicar so
-uma parte especifica durante o desenvolvimento (ex: iterar num modulo sem
-tocar nos demais), use `terraform apply -target="module.<nome>"`.
-
-Depois do apply, alguns outputs sao necessarios pra configurar o resto do
-projeto (`.env` da API, variaveis do GitHub Actions):
-
-```bash
-terraform output                          # lista todos os outputs
-terraform output -raw sql_server_fqdn     # ex: valor especifico, sem aspas
-```
-
-Variaveis sensiveis mantidas fora do controle de versao (`terraform.tfvars`,
-ignorado pelo Git).
-
-> **Nota sobre o Azure SQL Database**: o tier sempre-gratis (`use-free-limit`)
-> so pode ser definido no momento da criacao do banco, via Azure CLI — o
-> provider Terraform (`azurerm`) ainda nao expoe esse campo. Por isso o
-> banco foi criado com `az sql db create --use-free-limit true` e em
-> seguida importado para o state do Terraform (`terraform import`), para
-> que continue gerenciado como o restante da infraestrutura.
-
-> **O que vem no pacote `kube-prometheus-stack`** para observabilidade em Kubernetes:
->
-> | Componente | Finalidade |
-> |------------|------------|
-> | Prometheus | Coleta e armazena as metricas (banco de dados de series temporais) |
-> | Prometheus Operator | Controller que gerencia o Prometheus via CRDs (`ServiceMonitor`, `PodMonitor`, `PrometheusRule`, etc.) |
-> | Grafana | Dashboards e visualizacao das metricas |
-> | kube-state-metrics | Metricas sobre o estado dos objetos do Kubernetes (Deployments, Pods, HPAs, etc.) |
-> | node-exporter | Metricas de sistema operacional/hardware de cada node |
-> | Alertmanager | Roteamento de alertas (Slack, e-mail, etc.) — **desabilitado** neste projeto, sem canal de alerta configurado ainda |
->
-> Cada componente ja vem com seu proprio `Deployment`/`StatefulSet`, `Service`
-> e permissoes de RBAC do Kubernetes — nada disso precisou ser escrito na
-> mao, so configurado via `infra/helm/monitoring.yaml.tpl`.
-
-> **Logs agregados via Loki + Grafana Alloy** (`infra/helm/loki.tf`):
->
-> | Componente | Finalidade |
-> |------------|------------|
-> | Loki | Armazena e indexa os logs (modo `Monolithic` — um unico binario, sem os componentes read/write/backend separados do modo distribuido, que so fariam sentido em escala maior) |
-> | Grafana Alloy | Le o log de cada container do node (DaemonSet, 1 pod ja que o cluster tem 1 node so) e envia pro Loki |
->
-> O Loki roda com storage em filesystem (PVC de
-> 10Gi na mesma StorageClass do Prometheus/Grafana, sem object storage tipo
-> Azure Blob Storage) e retencao de 72h — mais longa que as 6h do Prometheus
-> Caches de chunks/resultados do Loki (baseados em Memcached) e o canary de
-> teste E2E ficam desabilitados de proposito: o cluster tem 1 node so
-> (`Standard_D4as_v4`, 4 vCPU/16GiB), e cada um desses componentes adicionaria
-> outro Pod competindo pelo mesmo recurso escasso, sem necessidade real no
-> volume de log baixo deste projeto.
-
-### API Gateway
-
-O [Azure API Management](https://azure.microsoft.com/products/api-management)
-(`infra/apim`, tier **Consumption** — sempre gratis ate 1M chamadas/mes) fica
-**na frente** do `ingress-nginx`, nao o substitui: o `ingress-nginx` continua
-servindo Grafana/Prometheus/Jaeger/Mailpit diretamente e vira so o *backend*
-que a APIM chama pra rotear. Do ponto de vista de quem consome a API (ou o
-Grafana), o gateway da APIM passa a ser o novo endereco publico:
-
-```bash
-cd infra
-terraform output -raw apim_gateway_url   # https://<nome>.azure-api.net
-```
-
-- `https://<nome>.azure-api.net/oficinaserver/...` → API (Swagger UI incluso, em `/oficinaserver/index.html`)
-- `https://<nome>.azure-api.net/grafana/...` → Grafana
-
-Cada backend novo entra com o mesmo padrao de path (`<nome>server`, ex.:
-`segurancaserver` para um futuro serviço de autenticação/autorização) —
-`oficinaserver` segue essa convenção desde já.
-
-Modelo **wildcard/passthrough**, não import de OpenAPI: cada API é criada
-"em branco" na APIM, com uma operação coringa (`url_template = "/*"`) por
-método HTTP real (`GET`/`POST`/`PUT`/`DELETE`/`PATCH`), repassando qualquer
-path para o backend — inclusive o que nenhum OpenAPI documentaria (a própria
-Swagger UI, `/health`, `/metrics`). A troca em relação ao import de OpenAPI
-foi deliberada: cobertura total sem precisar resincronizar a APIM a cada
-mudança de endpoint, ao custo de não ter as operações individuais
-navegáveis no portal da APIM.
-
-> **Por que não `method = "*"`?** A APIM não tem um método HTTP curinga de
-> verdade — o provider Terraform aceita `method = "*"` sem erro, mas o
-> runtime da Azure nunca casa nenhuma request contra ele (404 silencioso
-> sempre). `infra/apim/main.tf` usa `for_each` sobre os métodos reais em vez
-> disso.
-
-O tier Consumption funciona aqui sem VNet porque só precisa alcançar
-backends públicos pela internet (não suporta VNet integration) — exatamente
-o que o LoadBalancer público do `ingress-nginx` já fornece.
-
-#### Headers `X-Forwarded-*` (por que o Swagger via gateway funciona)
-
-Pra Swagger UI, "Try it out" e os links do Grafana funcionarem corretamente
-atrás do prefixo da APIM (em vez de vazar o IP/host interno do backend), a
-policy de cada API (`azurerm_api_management_api_policy`) injeta
-`X-Forwarded-Proto`/`-Host`/`-Prefix` antes de encaminhar. Dois pontos eram
-necessários para esses headers realmente chegarem intactos até o pod, e sem
-qualquer um deles o sintoma era o mesmo (`servers[]` do Swagger com o IP cru
-do `ingress-nginx` em vez do host público da APIM):
-
-1. **`ingress-nginx` com `controller.config.use-forwarded-headers: true`**
-   (`infra/helm/main.tf`) — o default do chart é `false`, que faz o nginx
-   **descartar** os headers recebidos e preencher com o que ele mesmo
-   enxerga (scheme `http`, já que a APIM fala com o LoadBalancer em porta 80
-   sem TLS). Esse foi o bug mais sutil de diagnosticar: a policy da APIM e o
-   `Program.cs` já estavam corretos, mas o nginx no meio do caminho
-   descartava tudo silenciosamente antes de repassar pro pod.
-2. **`Program.cs`** registra `app.UseForwardedHeaders(...)` (com
-   `KnownNetworks`/`KnownProxies` limpos — o IP de quem repassa não é fixo
-   de antemão) e um middleware próprio lendo `X-Forwarded-Prefix` na mão
-   (não é um header que o `ForwardedHeadersMiddleware` nativo entende) para
-   setar `HttpRequest.PathBase`. O `SwaggerEndpoint(...)` usa um path
-   **relativo** (sem `/` inicial) — um path absoluto seria resolvido pelo
-   browser a partir da raiz do domínio, ignorando o prefixo `/oficinaserver`.
-
-Grafana usa `serve_from_sub_path: false` (não `true`) em
-`infra/helm/monitoring.yaml.tpl` de propósito: essa flag é para quando o
-próprio Grafana precisa *remover* o prefixo de requests que chegam com ele
-ainda anexado — mas aqui é o contrário, a policy da APIM já tira o
-`/grafana` antes de encaminhar pro backend. Com `true` (a configuração
-tentada primeiro, errada), o Grafana entrava num loop infinito de redirect
-em `/login` e `/`.
+Ver o README/CLAUDE.md do `OficinaMecanica.Infra` pra: tabela de modulos,
+como rodar `terraform init/plan/apply`, detalhes do API Gateway (Azure API
+Management na frente do `ingress-nginx`), observabilidade via
+kube-prometheus-stack + Loki/Alloy, e notas operacionais sobre a assinatura
+Azure for Students.
 
 ## Kubernetes
 
@@ -427,7 +265,7 @@ kubectl get pods
 | `secret-provider-class.yaml` | SecretProviderClass | Lê os segredos da aplicação direto do Key Vault e sincroniza para um Secret nativo |
 
 As credenciais sensíveis (connection string, chave JWT, senha do admin) ficam
-no Azure Key Vault (`infra/keyvault_secrets.tf`), não mais em um arquivo
+no Azure Key Vault (`OficinaMecanica.Infra/keyvault_secrets.tf`), não mais em um arquivo
 aplicado manualmente. O CSI Secrets Store driver sincroniza esses valores
 para o Secret nativo `oficinamecanica-secrets` automaticamente, assim que o
 Deployment monta o `SecretProviderClass` como volume:
@@ -508,15 +346,15 @@ ser confundidos:
 
 - **Azure RBAC** (`azurerm_role_assignment`): concede permissões sobre
   **recursos do Azure** a identidades gerenciadas do cluster — `AcrPull`
-  (definido em `infra/aks/main.tf`, permite ao AKS puxar imagens do Azure
+  (definido em `OficinaMecanica.Infra/aks/main.tf`, permite ao AKS puxar imagens do Azure
   Container Registry) e `Key Vault Secrets User` (definido em
-  `infra/aks_keyvault_access.tf`, na raiz — permite ao CSI Secrets Store
+  `OficinaMecanica.Infra/aks_keyvault_access.tf`, na raiz — permite ao CSI Secrets Store
   driver ler segredos do Key Vault). Esses precisam ser criados
   explicitamente via Terraform.
 - **RBAC do Kubernetes** (`ClusterRole`/`ClusterRoleBinding`, nativos do
   cluster): controlam o que cada `ServiceAccount` pode fazer **dentro da
   API do Kubernetes**. O Prometheus e o Grafana instalados via
-  `infra/helm/monitoring.tf` já vêm com suas próprias permissões desse
+  `OficinaMecanica.Infra/helm/monitoring.tf` já vêm com suas próprias permissões desse
   tipo, criadas automaticamente pelo chart `kube-prometheus-stack` — o
   Prometheus precisa listar/observar Pods e Services do cluster pra
   descobrir alvos de coleta, e o Grafana precisa observar `ConfigMap`s
@@ -552,7 +390,7 @@ push/PR na main OU disparo manual (Run workflow)
 | `deploy-to-aks` | Idem, apos o job anterior | Aplica os manifests de `k8s/` e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
 
 **Autenticacao sem secrets de longa duracao**: os jobs 2 e 3 autenticam no
-Azure via **OIDC** (`infra/github_oidc/`) — o GitHub emite um token de
+Azure via **OIDC** (`OficinaMecanica.Infra/github_oidc/`) — o GitHub emite um token de
 identidade de curta duracao a cada execucao do workflow, e o Azure confia
 nele atraves de uma Federated Identity Credential restrita a
 `repo:<owner>/<repo>:ref:refs/heads/main`. Nao ha nenhum secret de Service
@@ -567,7 +405,7 @@ pelo GitHub, com IP dinamico, e nao teria como ser adicionado a uma lista
 fixa sem um passo extra no workflow pra liberar/revogar IP a cada execucao,
 adicionando minutos de espera por deploy pra uma protecao que ja e coberta
 pela autenticacao: sem uma credencial Azure AD valida com a role certa
-(`Cluster Admin Role`, `infra/github_oidc/main.tf`), o IP sozinho nao abre
+(`Cluster Admin Role`, `OficinaMecanica.Infra/github_oidc/main.tf`), o IP sozinho nao abre
 o cluster pra ninguem. Restringir por IP so faria sentido com um runner
 self-hosted dentro da mesma rede (VNet) do cluster — fora de escopo aqui.
 

@@ -80,15 +80,6 @@ docs/trivy-full.json
 *.swp
 *~
 
-# Terraform
-infra/**/.terraform/
-infra/**/*.tfstate
-infra/**/*.tfstate.*
-infra/**/*.tfvars
-!infra/**/terraform.tfvars.example
-infra/**/crash.log
-infra/**/crash.*.log
-
 # Kubernetes
 k8s/**/secret.yaml
 k8s/**/secret.yaml.bak

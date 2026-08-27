@@ -17,7 +17,6 @@ tests/
   OficinaMecanica.Application.Tests/  # Testes dos handlers e validators (Moq)
   OficinaMecanica.Integration.Tests/  # Testes de integracao (WebApplicationFactory + InMemory)
   OficinaMecanica.Tests.Common/       # Builders de entidades com Bogus, compartilhados por Domain.Tests e Application.Tests
-infra/                                  # Infraestrutura como codigo (Terraform / Azure) - ver secao "Infraestrutura (Terraform / Azure)"
 k8s/                                    # Manifests Kubernetes (Deployment, Service, Ingress, HPA) - ver secao "Kubernetes"
 local/                                  # Configs da stack de observabilidade do docker-compose (Prometheus, Loki, Alloy, Grafana) - ver secao "Docker"
 ```
@@ -118,7 +117,7 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 ## Banco de Dados
 
 - SQL Server via EF Core — o banco em si difere entre ambientes, sem nenhuma mudanca no codigo da aplicacao (so a connection string muda):
-  - **AKS/producao**: **Azure SQL Database** real (`svsfiap.database.windows.net`, tier serverless sempre-gratis, provisionado via `infra/sqldb/`), connection string sincronizada do Key Vault (ver secao "Kubernetes")
+  - **AKS/producao**: **Azure SQL Database** real (`svsfiap.database.windows.net`, tier serverless sempre-gratis, provisionado via `OficinaMecanica.Infra/sqldb/`), connection string sincronizada do Key Vault (ver secao "Kubernetes")
   - **Docker Compose/desenvolvimento local**: container `sqlserver` (`mcr.microsoft.com/mssql/server:2022-latest`, edicao Developer) no proprio `docker-compose.yml`, com volume nomeado (`sqlserver_data`) pra persistir entre `docker compose down`/`up` — optei por rodar local em vez de sempre depender do Azure SQL estar acessivel/acordado (tier serverless com auto-pause), so pra desenvolver
 - Configurations em `Infrastructure/Data/Configurations/`
 - Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra qualquer um dos dois bancos acima, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
@@ -131,10 +130,10 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 - Serilog com sink para Console
 - `GET /health`: health check simples (`AddHealthChecks()`/`MapHealthChecks`, sem verificacao de dependencias como banco) — so confirma que o processo esta de pe. Sem autenticacao.
 - `GET /metrics`: metricas no formato Prometheus (`prometheus-net.AspNetCore`, `UseHttpMetrics()`/`MapMetrics()`) — contagem/duracao de requests HTTP por padrao. Sem autenticacao.
-- Scrape configurado via `ServiceMonitor` em `k8s/monitoring/servicemonitor.yaml`, apontando pro Prometheus instalado em `infra/helm/monitoring.tf` (kube-prometheus-stack)
-- Logs agregados via Loki + Grafana Alloy (`infra/helm/loki.tf`) — ver secao "Infraestrutura (Terraform / Azure)" pra detalhes
+- Scrape configurado via `ServiceMonitor` em `k8s/monitoring/servicemonitor.yaml`, apontando pro Prometheus instalado em `OficinaMecanica.Infra/helm/monitoring.tf` (kube-prometheus-stack)
+- Logs agregados via Loki + Grafana Alloy (`OficinaMecanica.Infra/helm/loki.tf`) — ver secao "Infraestrutura (Terraform / Azure)" pra detalhes
 - Tracing distribuido via Jaeger (`k8s/jaeger/`, modo all-in-one) — API instrumentada com OpenTelemetry .NET (ASP.NET Core + SqlClient), exportando via OTLP. So ativa se `Otel:Endpoint` estiver configurado (mesmo padrao resiliente do `Smtp:Host`); Grafana ja sai com o Jaeger como fonte de dados adicional. Dev local: servico `jaeger` no `docker-compose.yml` (UI web em `http://localhost:16686`)
-- Dev local: stack completa de observabilidade tambem no `docker-compose.yml` (Prometheus + Loki + Alloy + Grafana, servicos `prometheus`/`loki`/`alloy`/`grafana`), equivalente ao que roda no AKS via `infra/helm/`. Grafana local ja sai com Prometheus, Loki e Jaeger provisionados como datasources automaticamente (`local/grafana-datasources.yml`) — UI web em `http://localhost:3000` (login `admin` / `GRAFANA_ADMIN_PASSWORD`)
+- Dev local: stack completa de observabilidade tambem no `docker-compose.yml` (Prometheus + Loki + Alloy + Grafana, servicos `prometheus`/`loki`/`alloy`/`grafana`), equivalente ao que roda no AKS via `OficinaMecanica.Infra/helm/`. Grafana local ja sai com Prometheus, Loki e Jaeger provisionados como datasources automaticamente (`local/grafana-datasources.yml`) — UI web em `http://localhost:3000` (login `admin` / `GRAFANA_ADMIN_PASSWORD`)
 - **Cuidado com a app "Traces Drilldown"** do Grafana (menu lateral, instalada automaticamente como plugin): so funciona com datasource Tempo, nao reconhece datasource Jaeger — pra ver traces, usar a aba **Explore** (icone de bussola) normal, selecionando o datasource Jaeger manualmente
 
 ## Docker
@@ -149,8 +148,8 @@ Servicos no docker compose (`docker compose up -d` sobe todos):
 - **oficinamecanica-mailpit**: servidor SMTP de desenvolvimento (`axllent/mailpit`), captura os e-mails enviados pela API sem entregar de verdade — UI web na porta 8025 (ver secao "Notificacao por E-mail")
 - **oficinamecanica-jaeger**: tracing distribuido de desenvolvimento (`jaegertracing/all-in-one`), recebe os spans exportados pela API via OTLP — UI web na porta 16686 (ver secao "Observabilidade")
 - **oficinamecanica-prometheus**: Prometheus, coleta metricas via scrape de `api:8080/metrics` (config em `local/prometheus.yml`) — porta 9090
-- **oficinamecanica-loki**: Loki (config em `local/loki-config.yaml`, mesmos parametros do `infra/helm/loki.yaml.tpl` usado no AKS), porta 3100
-- **oficinamecanica-alloy**: Grafana Alloy, versao local do `infra/helm/alloy.yaml.tpl` — em vez de ler arquivo de log do node (impossivel fora do Kubernetes), le os logs de todos os containers direto da API do Docker (`discovery.docker`/`loki.source.docker`, config em `local/alloy-config.river`), via socket do Docker montado
+- **oficinamecanica-loki**: Loki (config em `local/loki-config.yaml`, mesmos parametros do `OficinaMecanica.Infra/helm/loki.yaml.tpl` usado no AKS), porta 3100
+- **oficinamecanica-alloy**: Grafana Alloy, versao local do `OficinaMecanica.Infra/helm/alloy.yaml.tpl` — em vez de ler arquivo de log do node (impossivel fora do Kubernetes), le os logs de todos os containers direto da API do Docker (`discovery.docker`/`loki.source.docker`, config em `local/alloy-config.river`), via socket do Docker montado
 - **oficinamecanica-grafana**: Grafana, ja com Prometheus/Loki/Jaeger provisionados como datasources automaticamente (`local/grafana-datasources.yml`, montado em `/etc/grafana/provisioning/datasources/`) — porta 3000, login `admin` / `GRAFANA_ADMIN_PASSWORD` (`.env`)
 
 Credenciais SonarQube: `admin` / valor de `SONAR_ADMIN_PASSWORD` no `.env` (default sugerido no `.env.example`: `Admin@Sonar2024`)  
@@ -163,58 +162,31 @@ Notas importantes:
 
 ## Infraestrutura (Terraform / Azure)
 
-Pasta `infra/` — provisiona a infraestrutura real do projeto no Azure via
-Terraform (`azurerm` ~> 4.0, `helm` ~> 2.0, `kubernetes` ~> 2.23 e `azuread`
-~> 3.0). Raiz (`infra/*.tf`) + 9 modulos:
+O Terraform que provisiona a infraestrutura real do projeto no Azure **nao
+vive mais nesse repositorio** — migrou pra um repositorio proprio,
+`OficinaMecanica.Infra` (sibling deste, `E:\FIAP\Pos\OficinaMecanica.Infra`),
+pra centralizar a infra de todos os futuros servicos/APIs (ex:
+`OficinaMecanica.Seguranca`) num unico lugar em vez de cada repo de codigo
+carregar seu proprio `infra/`. A migracao foi so de arquivos — mesmo
+backend de state remoto (`stfiap`/container `tfstate`), nenhum recurso no
+Azure foi recriado (`terraform plan` vazio antes/depois da mudanca de
+repositorio).
 
-- **`infra/rg/`**: resource group (`rgfiap`, `northcentralus`)
-- **`infra/storage/`**: storage account (`stfiap`) que guarda o tfstate remoto (backend `azurerm`, ver `infra/backend.tf`)
-- **`infra/acr/`**: Container Registry (`acrfiap.azurecr.io`), SKU Standard (free tier)
-- **`infra/aks/`**: cluster AKS (`aksfiap`), 1 node `Standard_D4as_v4` (AMD, 4 vCPU/16GiB - subiu de `Standard_D2s_v3` por falta de CPU sobrando no node unico; nao-gratis, usar `az aks stop`/`start` pra nao gerar custo ocioso — mas isso NAO para o IP publico do Load Balancer nem o disco do node, que continuam cobrando mesmo com o cluster parado), Azure CNI Overlay, integrado ao ACR via role assignment `AcrPull`. Tambem tem `oidc_issuer_enabled`, `workload_identity_enabled` e o addon `key_vault_secrets_provider` (CSI Secrets Store driver) habilitados
-- **`infra/keyvault/`**: Key Vault (`kvfiap`), RBAC-based (`rbac_authorization_enabled`), rede restrita por IP (`network_acls`, `default_action = Deny`) + bypass pra servicos Azure confiaveis — libera tanto o IP do cliente quanto o IP de saida do cluster AKS (esse ultimo descoberto automaticamente, ver `infra/aks_keyvault_access.tf` abaixo). Os 3 segredos da aplicacao (`infra/keyvault_secrets.tf`, na raiz) sao sincronizados pro Secret nativo do Kubernetes via CSI Secrets Store driver — ver `k8s/oficinamecanica-api/secret-provider-class.yaml`
-- **`infra/helm/`**: quatro `helm_release` — `ingress-nginx` (chart oficial, namespace proprio, Service `LoadBalancer`, com a annotation `azure-load-balancer-health-probe-request-path: /healthz` — sem ela, o health probe do proprio Load Balancer do Azure bate em `GET /`, cai na regra catch-all da API e recebe `301` da Swagger UI em vez de `200`, fazendo o Azure bloquear **todo** trafego externo por considerar o `ingress-nginx` inteiro unhealthy; tambem seta `controller.config.use-forwarded-headers: true` — sem isso o ingress-nginx **ignora** os `X-Forwarded-Proto`/`-Host`/`-Prefix` que a policy da APIM injeta e os substitui pelos proprios valores computados, ver `infra/apim/` abaixo), `monitoring` (`kube-prometheus-stack`: Prometheus + Grafana + kube-state-metrics + node-exporter, sem Alertmanager, PVC de 8Gi/4Gi na StorageClass `managed-csi-premium` que o proprio AKS ja cria, dashboards do Grafana como codigo via sidecar), `loki` (agregacao de logs, modo `Monolithic`, PVC de 10Gi na mesma StorageClass, retencao de 72h, chart do repositorio `grafana-community` — ver `infra/helm/loki.tf`) e `alloy` (coleta os logs de cada pod do node e envia pro Loki). Usa o provider `helm` configurado em `infra/providers.tf` apontando pro `infra/aks` via kube_config
-- **`infra/sqldb/`**: Azure SQL Database (`svsfiap.database.windows.net` / `OficinaMecanicaDb`), serverless, tier sempre-gratis. O campo que ativa esse tier (`use_free_limit`) nao existe no provider `azurerm` e nao pode ser setado depois via `az sql db update` (so na criacao) — por isso o banco foi criado via `az sql db create --use-free-limit true --free-limit-exhaustion-behavior AutoPause ...` e depois trazido para o state do Terraform com `terraform import`
-- **`infra/github_oidc/`**: App Registration + Service Principal + Federated Identity Credential (OIDC, restrita a `repo:<owner>/<repo>:ref:refs/heads/main`) usados pelo GitHub Actions pra autenticar no Azure sem nenhum secret de longa duracao. Role assignments `AcrPush` (no `acrfiap`) e `Azure Kubernetes Service Cluster Admin Role` (no `aksfiap`) — ver secao "CI/CD" abaixo
-- **`infra/apim/`**: Azure API Management (`apimfiap`), SKU `Consumption_0` (unico valor aceito nesse tier - serverless, sem capacidade dedicada, sempre gratis ate 1M chamadas/mes). Fica **na frente** do `ingress-nginx` (nao o substitui) - o `ingress-nginx` continua servindo Grafana/Prometheus/Jaeger/Mailpit diretamente e vira so o *backend* que a APIM chama. Modelo **wildcard/passthrough** (nao import de OpenAPI): cada API (`oficinamecanica-api` no path `oficinaserver`, `grafana` no path `grafana`) e criada "em branco" com uma `azurerm_api_management_api_operation` coringa (`url_template = "/*"`) por metodo HTTP real via `for_each = toset(["GET", "POST", "PUT", "DELETE", "PATCH"])` — a APIM **nao tem um metodo HTTP curinga de verdade**, `method = "*"` e aceito pelo schema do provider Terraform sem erro mas o runtime da Azure nunca casa com nada (404 silencioso pra qualquer request). Isso repassa QUALQUER path/metodo pro backend, inclusive coisas fora de qualquer OpenAPI (Swagger UI em `/swagger/*`, `/health`, `/metrics`), trocando a curadoria de operations visiveis no portal por cobertura total sem manutencao manual por endpoint. Backends definidos como entidades nomeadas e reutilizaveis (`azurerm_api_management_backend`: `ingress_nginx` e `grafana`), referenciadas via `<set-backend-service backend-id="...">` na policy de cada API (`azurerm_api_management_api_policy`) — nao `service_url` inline. O IP do LoadBalancer do `ingress-nginx` (e o host nip.io do Grafana, montado a partir dele) e lido dinamicamente via `data "kubernetes_service"` (provider `kubernetes`, configurado em `infra/providers.tf` reaproveitando os mesmos outputs de `module.aks` que o provider `helm` ja usa). `subscription_required = false` nas duas (a API ja tem seu proprio JWT + rotas publicas de proposito - nao faz sentido exigir subscription key da APIM por cima; Grafana tem seu proprio login). Motivo do tier Consumption funcionar aqui sem VNet: ele so alcanca backends publicos pela internet (nao suporta VNet integration), exatamente o que o LB publico do `ingress-nginx` ja fornece. Nomenclatura de path pensada pra crescer: futuros backends entram como `<nome>server` (ex.: `segurancaserver`), mesmo padrao de `oficinaserver`.
+Ver `CLAUDE.md`/`README.md` do `OficinaMecanica.Infra` pra detalhes de
+modulos, comandos de `terraform init/plan/apply` e notas operacionais sobre
+a assinatura Azure for Students (restricao de regiao, capacidade por
+SKU/regiao, etc.).
 
-  A policy de cada API injeta os headers `X-Forwarded-*` que o backend precisa pra saber que esta atras de um gateway publico: `oficinamecanica` seta `X-Forwarded-Proto: https`, `X-Forwarded-Host: <apim>.azure-api.net` e `X-Forwarded-Prefix: /oficinaserver`; `grafana` so `X-Forwarded-Proto: https` (Grafana nao precisa de Prefix — ver adiante). Pra esses headers realmente chegarem intactos no pod, dois pontos criticos:
-  - **`ingress-nginx` precisa de `use-forwarded-headers: true`** (`infra/helm/`, acima) — o default do chart e `false`, que faz o nginx **ignorar** os headers recebidos e preenche-los sozinho com o que ele mesmo enxerga (scheme `http`, ja que APIM fala com o LoadBalancer em porta 80 sem TLS; host = IP cru do LoadBalancer). Esse foi o bug raiz por tras do `servers[]` do Swagger aparecendo como `http://<ip-ingress>/oficinaserver` em vez de `https://apimfiap.azure-api.net/oficinaserver` mesmo com a policy da APIM e o `Program.cs` (abaixo) ja corretos — nginx estava descartando os headers antes de repassar pro pod.
-  - **`Program.cs`** (`OficinaMecanica.API`) registra `app.UseForwardedHeaders(...)` com `ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost` e `KnownNetworks`/`KnownProxies` limpos (o IP de quem repassa - pod do ingress-nginx - nao e fixo de antemao), mais um middleware customizado que le `X-Forwarded-Prefix` na mao e seta `HttpRequest.PathBase` (nao e um header que o `ForwardedHeadersMiddleware` built-in entende, so Proto/Host/For). O `app.UseSwagger(...)` calcula `swaggerDoc.Servers` por requisicao (`PreSerializeFilters`, a partir de `Scheme`/`Host`/`PathBase`) e `SwaggerEndpoint("swagger/v1/swagger.json", ...)` usa path **relativo** (sem `/` inicial) - um path absoluto seria resolvido pelo browser a partir da raiz do dominio, ignorando o prefixo `/oficinaserver`.
-
-  Grafana usa `serve_from_sub_path: false` (nao `true`) em `infra/helm/monitoring.yaml.tpl` **de proposito**: essa flag e pra quando o Grafana precisa REMOVER o prefixo de requests que chegam com ele ainda anexado (cenario de reverse proxy que so repassa, sem reescrever nada) - mas aqui e o contrario, a policy da APIM (`set-backend-service` + operations coringa) ja tira o `/grafana` **antes** de encaminhar pro backend (confirmado testando `/grafana/api/health` contra o backend direto). Com `serve_from_sub_path: true` (a config errada, tentada primeiro) o Grafana entrava num loop infinito de redirect em `/login` e `/`, porque esperava receber o prefixo e nunca recebia. `root_url` continua apontando pro host publico da APIM (`https://apimfiap.azure-api.net/grafana/`) pra gerar links absolutos corretos, independente do que chega na request.
-
-  `Program.cs` tambem mantem `c.CustomOperationIds(...)` (antes do `AddSwaggerGen`) - deixou de ser estritamente necessario pra APIM desde a troca pro modelo wildcard (nao ha mais import de OpenAPI casando por `operationId`), mas continua valido por si so: sem isso, metodos repetidos entre controllers (`ObterPorId`, `Criar`, etc) geram nomes de operacao genericos no Swagger.
-
-Dois arquivos na raiz (nao dentro de nenhum modulo) conectam modulos entre si
-sem criar dependencia circular — cada um precisa ver outputs de dois modulos
-ao mesmo tempo, o que so e possivel na raiz (modulos nunca "olham de volta"
-pra quem os chama):
-- **`infra/keyvault_secrets.tf`**: os 3 `azurerm_key_vault_secret` da aplicacao (`jwt-secret-key`, `admin-senha`, `sql-connection-string`, essa ultima montada a partir dos outputs do `infra/sqldb`)
-- **`infra/aks_keyvault_access.tf`**: a role assignment `Key Vault Secrets User` pra identidade do addon CSI do `infra/aks` no `infra/keyvault`, mais um `data "azurerm_public_ip"` que descobre automaticamente o IP de saida do cluster (usado no `network_acls` do Key Vault) — nenhum dos dois modulos referencia o outro diretamente
-
-A assinatura usada (Azure for Students) tem restricao de regiao
-(`sys.regionrestriction`: so libera `chilecentral`, `canadacentral`,
-`northcentralus`, `eastus`, `mexicocentral`). Alem dessa politica geral,
-alguns servicos tem uma segunda trava de **capacidade propria por regiao**
-(passar na politica de regiao nao garante que aquele servico especifico vai
-deixar criar ali): o tamanho de VM do node pool do AKS (serie B bloqueada
-pelo proprio AKS, `Standard_F2s_v2` apareceu como "Size not available" mesmo
-com cota livre — fechado em `Standard_D2s_v3`) e o Azure SQL Database
-(`centralus`/`eastus` bloqueados por `ProvisioningDisabled` apesar de
-permitidos pela politica de regiao — fechado em `canadacentral`). Se o
-provider Terraform nao expuser um campo que so existe via API/CLI (como o
-`use_free_limit` do SQL Database), o caminho e criar o recurso via `az cli`
-e trazer pro Terraform com `terraform import`.
-
-Comandos do Terraform ficam por conta de quem estiver rodando (nao ha
-automacao de CI/CD pra provisionar infraestrutura ainda) — sempre a partir
-de `infra/` como working directory. O deploy da *aplicacao* (nao da infra)
-ja e automatizado, ver secao "CI/CD" abaixo.
+O que continua neste repositorio: os manifests do Kubernetes (`k8s/`, ver
+secao abaixo) e o CI/CD da aplicacao (`.github/workflows/ci.yml`, ver secao
+"CI/CD") — o deploy da *aplicacao* continua automatizado por push na
+`main`; so o provisionamento de infra e que passou a ser manual num
+repositorio separado (ja era manual antes tambem, so mudou de onde roda).
 
 ## Kubernetes
 
-Pasta `k8s/` — manifests da aplicacao (nao infra de cluster, essa fica em
-`infra/` via Terraform). Aplicados automaticamente pelo job `deploy-to-aks`
+Pasta `k8s/` — manifests da aplicacao (nao infra de cluster, essa fica no
+repositorio `OficinaMecanica.Infra` via Terraform). Aplicados automaticamente pelo job `deploy-to-aks`
 do CI/CD a cada push na `main` (ver secao "CI/CD" abaixo) — `kubectl apply -f`
 manual continua funcionando igual, se precisar rodar fora do pipeline.
 Organizada em subpastas por assunto:
@@ -242,11 +214,11 @@ k8s/
 - **`service.yaml`**: ClusterIP, porta 80 -> 8080 (so alcancavel via Ingress),
   porta nomeada `http` (necessario pro `ServiceMonitor` referenciar por nome).
 - **`ingress.yaml`**: `ingressClassName: nginx`, roteia tudo pro Service. Depende
-  do `ingress-nginx` instalado via `infra/helm/`.
+  do `ingress-nginx` instalado via `OficinaMecanica.Infra/helm/`.
 - **`hpa.yaml`**: HorizontalPodAutoscaler, 2 a 5 replicas por CPU (70%) e memoria
   (80%). Depende do metrics-server (vem habilitado por padrao no AKS).
 - **`secret-provider-class.yaml`**: `SecretProviderClass` que le os 3 campos
-  sensiveis direto do Key Vault (`kvfiap`, via `infra/keyvault_secrets.tf`),
+  sensiveis direto do Key Vault (`kvfiap`, via `OficinaMecanica.Infra/keyvault_secrets.tf`),
   usando a managed identity do proprio addon `key_vault_secrets_provider`
   (sem Workload Identity dedicada, escopo simples). O campo `secretObjects`
   sincroniza esses valores pro Secret nativo `oficinamecanica-secrets` — o
@@ -258,7 +230,7 @@ k8s/
 ### `k8s/monitoring/`
 
 - **`servicemonitor.yaml`**: diz pro Prometheus (instalado via
-  `infra/helm/monitoring.tf`) pra fazer scrape do `GET /metrics` da API a
+  `OficinaMecanica.Infra/helm/monitoring.tf`) pra fazer scrape do `GET /metrics` da API a
   cada 30s. Tem o label `release: monitoring` (obrigatorio — e o nome do
   helm release do Prometheus, sem isso o `ServiceMonitor` e ignorado) e
   `namespaceSelector` apontando pro namespace `default` (onde o Service da
@@ -275,15 +247,15 @@ k8s/
   mais simples pra teste rapido: `kubectl port-forward`.
 - **`dashboard-oficinamecanica-api.yaml`**: `ConfigMap` com o label
   `grafana_dashboard: "1"` e o JSON do dashboard embutido em `data` — o
-  sidecar do Grafana (`infra/helm/monitoring.yaml.tpl`) detecta sozinho e
+  sidecar do Grafana (`OficinaMecanica.Infra/helm/monitoring.yaml.tpl`) detecta sozinho e
   importa, sem precisar clicar em nada na UI. Paineis usam as metricas reais
   do `prometheus-net` (`http_requests_received_total`,
   `http_request_duration_seconds`, `http_requests_in_progress`) mais
   CPU/memoria/replicas via `kube-state-metrics`/cAdvisor.
 
-O Deployment le seus segredos do Key Vault (`infra/keyvault/`) via CSI Secrets
-Store driver — ver `secret-provider-class.yaml` acima e `infra/keyvault_secrets.tf`
-na raiz (ver `## Infraestrutura`).
+O Deployment le seus segredos do Key Vault (`OficinaMecanica.Infra/keyvault/`) via CSI Secrets
+Store driver — ver `secret-provider-class.yaml` acima e
+`OficinaMecanica.Infra/keyvault_secrets.tf` (ver secao "Infraestrutura (Terraform / Azure)").
 
 ### `k8s/mailpit/`
 
@@ -305,7 +277,7 @@ na raiz (ver `## Infraestrutura`).
   replica, sem persistencia (traces em memoria, aceitavel pro volume baixo
   de um projeto de estudo) — namespace `monitoring` (agrupado com o resto
   da observabilidade, diferente do Mailpit, que fica junto da API). Optei
-  por manifest puro (nao um `helm_release` em `infra/helm/`) porque o modo
+  por manifest puro (nao um `helm_release` em `OficinaMecanica.Infra/helm/`) porque o modo
   all-in-one e um unico container sem configuracao complexa — o chart
   oficial do Jaeger e pensado pra instalacoes maiores (Cassandra/
   Elasticsearch, operator), desproporcional pro que precisamos aqui.
@@ -329,7 +301,7 @@ mexeu em codigo da aplicacao).
    (`.trx`) e como artifact (`test-results`, retencao de 90 dias).
 2. **`build-and-push-image`**: só em push de verdade na `main` ou
    `workflow_dispatch` (nao em PR). Autentica no Azure via `azure/login@v2`
-   (OIDC — ver `infra/github_oidc/`), `az acr login`, e publica a imagem no
+   (OIDC — ver `OficinaMecanica.Infra/github_oidc/`), `az acr login`, e publica a imagem no
    `acrfiap` com 2 tags: `${{ github.sha }}` (hash do commit) e `latest`,
    via `docker/build-push-action` (cache de camadas `type=gha`).
 3. **`deploy-to-aks`**: idem (push ou `workflow_dispatch` na `main`). Autentica via
@@ -339,7 +311,7 @@ mexeu em codigo da aplicacao).
    `kubectl set image` apontando pro hash do commit (nao o `:latest` fixo
    do YAML) + `kubectl rollout status` pra confirmar.
 
-Autenticacao via **OIDC** (`infra/github_oidc/`) — o GitHub emite um token de
+Autenticacao via **OIDC** (`OficinaMecanica.Infra/github_oidc/`) — o GitHub emite um token de
 identidade por execucao, sem nenhum secret de longa duracao guardado no
 repositorio. As 3 variables do repositorio (`AZURE_CLIENT_ID`,
 `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, configuradas via `gh variable
