@@ -26,9 +26,9 @@ variable "kubernetes_version" {
 }
 
 variable "node_vm_size" {
-  description = "Tamanho da VM do node pool. Tentei a serie B (burstable, mais barata) mas o AKS nao aceita como node de sistema; tentei tambem Standard_F2s_v2, que apareceu como indisponivel nesta combinacao de regiao/assinatura. Fechei em Standard_D2s_v3 (familia Standard DSv3), compativel com a cota e as restricoes de disponibilidade da assinatura Student utilizada."
+  description = "Tamanho da VM do node pool. Tentei a serie B (burstable, mais barata) mas o AKS nao aceita como node de sistema."
   type        = string
-  default     = "Standard_D2s_v3"
+  default     = "Standard_D4as_v4"
 }
 
 variable "node_count" {

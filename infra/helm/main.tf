@@ -30,4 +30,17 @@ resource "helm_release" "ingress_nginx" {
     name  = "controller.service.annotations.service\\.beta\\.kubernetes\\.io/azure-load-balancer-health-probe-request-path"
     value = "/healthz"
   }
+
+  # Sem isso, o ingress-nginx ignora os X-Forwarded-Proto/-Host/-Prefix que a
+  # policy da APIM (infra/apim/) seta e os substitui pelos proprios valores
+  # (scheme http, ja que APIM fala com o LoadBalancer em porta 80 sem TLS; e
+  # host = IP cru do LoadBalancer) - exatamente o sintoma observado no
+  # servers[] do Swagger (http://<ip>/oficinaserver em vez de
+  # https://apimfiap.azure-api.net/oficinaserver). use-forwarded-headers
+  # existe no proprio chart pra esse cenario: "NGINX esta atras de outro
+  # proxy L7 que ja seta esses headers corretamente".
+  set {
+    name  = "controller.config.use-forwarded-headers"
+    value = "true"
+  }
 }

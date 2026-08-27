@@ -2,6 +2,7 @@ using OficinaMecanica.Application;
 using OficinaMecanica.Infrastructure;
 using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.API.Middleware;
+using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
 using OpenTelemetry.Resources;
@@ -47,6 +48,14 @@ builder.Services.AddSwaggerGen(c =>
         Description = "API do Sistema de Gestão para Oficina Mecânica"
     });
 
+    // IDs de operação únicos por controller+action - vários métodos (ObterPorId,
+    // Criar, Listar, Atualizar) se repetem entre controllers. Sem isso, o import
+    // do OpenAPI no Azure API Management gera nomes de operação genéricos no
+    // primeiro import e fica instável em reimports futuros (a APIM casa por
+    // operationId pra saber o que atualizar vs. apagar).
+    c.CustomOperationIds(apiDesc =>
+        $"{apiDesc.ActionDescriptor.RouteValues["controller"]}_{apiDesc.ActionDescriptor.RouteValues["action"]}");
+
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
         Description = "JWT Authorization header usando o esquema Bearer. Exemplo: 'Bearer {token}'",
@@ -74,6 +83,32 @@ builder.Services.AddSwaggerGen(c =>
 
 var app = builder.Build();
 
+// Scheme/Host (X-Forwarded-Proto/-Host) nao sao lidos automaticamente pelo
+// ASP.NET Core so por chegar o header - precisa desse middleware pra
+// confiar neles. Sem isso, HttpRequest.Scheme/Host continuam refletindo o
+// que o pod realmente recebe (http, IP interno do ingress-nginx), nao o
+// que o cliente usou pra chegar na APIM (https, apimfiap.azure-api.net).
+// KnownNetworks/KnownProxies limpos porque o IP de quem repassa (pod do
+// ingress-nginx) nao e fixo/conhecido de antemao.
+var forwardedHeadersOptions = new ForwardedHeadersOptions
+{
+    ForwardedHeaders = ForwardedHeaders.XForwardedProto | ForwardedHeaders.XForwardedHost
+};
+forwardedHeadersOptions.KnownNetworks.Clear();
+forwardedHeadersOptions.KnownProxies.Clear();
+app.UseForwardedHeaders(forwardedHeadersOptions);
+
+// Le o prefixo que a APIM manda (header X-Forwarded-Prefix, setado via
+// policy em infra/apim/) e ajusta o PathBase da request - sem isso, os
+// links absolutos que o Swagger saem sem o prefixo.
+app.Use((context, next) =>
+{
+    var prefix = context.Request.Headers["X-Forwarded-Prefix"].FirstOrDefault();
+    if (!string.IsNullOrEmpty(prefix))
+        context.Request.PathBase = new PathString(prefix);
+    return next();
+});
+
 // Middleware
 app.UseMiddleware<ExceptionHandlingMiddleware>();
 app.UseHttpMetrics();
@@ -89,10 +124,25 @@ if (app.Environment.IsDevelopment())
         db.Database.EnsureCreated();
 }
 
-app.UseSwagger();
+app.UseSwagger(c =>
+{
+    // servers[] calculado por requisicao (nao fixo) - reflete o PathBase
+    // acima, entao o spec e o "Try it out" apontam pro prefixo certo tanto
+    // direto (sem prefixo) quanto atras da APIM (/oficinaserver).
+    c.PreSerializeFilters.Add((swaggerDoc, httpReq) =>
+    {
+        swaggerDoc.Servers = new List<OpenApiServer>
+        {
+            new() { Url = $"{httpReq.Scheme}://{httpReq.Host}{httpReq.PathBase}" }
+        };
+    });
+});
 app.UseSwaggerUI(c =>
 {
-    c.SwaggerEndpoint("/swagger/v1/swagger.json", "OficinaMecanica API v1");
+    // Relativo (sem "/" no inicio) - resolve certo tanto acessando direto
+    // quanto com o PathBase da APIM na frente, sem precisar saber o
+    // prefixo de antemao.
+    c.SwaggerEndpoint("swagger/v1/swagger.json", "OficinaMecanica API v1");
     c.RoutePrefix = string.Empty;
 });
 

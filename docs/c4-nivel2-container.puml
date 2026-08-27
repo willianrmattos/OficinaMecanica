@@ -10,6 +10,8 @@ Person(admin, "Administrador", "Usuario autenticado com JWT")
 Person_Ext(cliente, "Cliente Final", "Acesso anonimo a endpoints publicos")
 System_Ext(smtp, "Servidor SMTP", "Mailpit (dev) - notificacoes de status por e-mail")
 
+Container(apim, "Azure API Management", "Consumption tier", "Gateway na frente do ingress-nginx (que vira so backend). Modelo wildcard/passthrough por API - path /oficinaserver pra API, /grafana pro Grafana, sem exigir subscription key (a API ja tem seu proprio JWT + rotas publicas de proposito).")
+
 System_Boundary(oficina, "OficinaMecanica (AKS)") {
     Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. Valida entradas com FluentValidation. Emite metricas (prometheus-net), logs (Serilog) e traces (OpenTelemetry). Escalada de 2 a 5 replicas via HPA.")
     ContainerDb(db, "OficinaMecanicaDb", "Azure SQL Database", "Persiste clientes, veiculos, servicos, pecas, ordens de servico e historico de status. Concorrencia otimista com ConcurrencyToken. Tier serverless sempre-gratis.")
@@ -21,8 +23,11 @@ System_Boundary(oficina, "OficinaMecanica (AKS)") {
     Container(jaeger, "Jaeger", "All-in-one", "Recebe e armazena os traces distribuidos exportados pela API via OTLP.")
 }
 
-Rel(admin, api, "Chama endpoints administrativos", "HTTPS / REST / JWT Bearer")
-Rel(cliente, api, "Consulta OS e aprova ou recusa orcamento", "HTTPS / REST (anonimo)")
+Rel(admin, apim, "Chama endpoints administrativos", "HTTPS / REST / JWT Bearer")
+Rel(admin, apim, "Visualiza dashboards, logs e traces", "HTTPS")
+Rel(cliente, apim, "Consulta OS e aprova ou recusa orcamento", "HTTPS / REST (anonimo)")
+Rel(apim, api, "Roteia /oficinaserver via ingress-nginx (backend publico, wildcard passthrough)", "HTTP")
+Rel(apim, grafana, "Roteia /grafana via ingress-nginx (backend publico, wildcard passthrough)", "HTTP")
 Rel(api, db, "Le e escreve via EF Core", "TCP 1433 / TDS")
 Rel(api, smtp, "Envia notificacao a cada mudanca de status", "SMTP (MailKit)")
 Rel(smtp, cliente, "Entrega notificacao", "E-mail")
@@ -34,6 +39,5 @@ Rel(api, jaeger, "Exporta spans de tracing", "OTLP / gRPC")
 Rel(grafana, prometheus, "Consulta metricas", "PromQL")
 Rel(grafana, loki, "Consulta logs", "LogQL")
 Rel(grafana, jaeger, "Consulta traces", "HTTP")
-Rel(admin, grafana, "Visualiza dashboards, logs e traces", "HTTPS")
 
 @enduml

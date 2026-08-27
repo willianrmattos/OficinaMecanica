@@ -21,3 +21,15 @@ provider "helm" {
     cluster_ca_certificate = base64decode(module.aks.kube_config_cluster_ca_certificate)
   }
 }
+
+# Usado pelo modulo infra/apim pra ler o IP publico do LoadBalancer do
+# ingress-nginx (data "kubernetes_service") - diferente do provider "helm"
+# acima, o provider "kubernetes" espera os campos direto na raiz do bloco,
+# nao aninhados dentro de um bloco kubernetes {} (isso e especifico do
+# schema do provider helm).
+provider "kubernetes" {
+  host                   = module.aks.kube_config_host
+  client_certificate     = base64decode(module.aks.kube_config_client_certificate)
+  client_key             = base64decode(module.aks.kube_config_client_key)
+  cluster_ca_certificate = base64decode(module.aks.kube_config_cluster_ca_certificate)
+}

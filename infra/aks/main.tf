@@ -23,7 +23,7 @@ resource "azurerm_kubernetes_cluster" "this" {
   }
 
   default_node_pool {
-    name       = "agentpool"
+    name       = "agenttmp"
     vm_size    = var.node_vm_size
     node_count = var.node_count
     max_pods   = 110
@@ -37,6 +37,12 @@ resource "azurerm_kubernetes_cluster" "this" {
       drain_timeout_in_minutes      = 0
       node_soak_duration_in_minutes = 0
     }
+
+    # Exigido pelo provider ao mudar vm_size (ou outros campos que forcam
+    # recriacao do node pool default) - permite ao Terraform subir um pool
+    # temporario com este nome, migrar as cargas e recriar o node pool
+    # definitivo, tudo num apply so. Precisa ser diferente do "name" acima.
+    temporary_name_for_rotation = "agentpool2"
   }
 
   # Deixei sem vnet_subnet_id: usei Azure CNI Overlay sem "bring your own

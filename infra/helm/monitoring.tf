@@ -49,6 +49,7 @@ resource "helm_release" "monitoring" {
       storage_class_name   = var.storage_class_name
       loki_release_name    = var.loki_release_name
       monitoring_namespace = var.monitoring_namespace
+      apim_gateway_host    = "${var.apim_name}.azure-api.net"
     })
   ]
 

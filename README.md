@@ -220,6 +220,7 @@ Terraform, no diretorio [infra/](infra/), organizada em modulos:
 | `infra/helm` | Helm Releases (ingress-nginx, kube-prometheus-stack, Loki, Alloy) | Ingress Controller e observabilidade (metricas via Prometheus + Grafana, logs via Loki + Alloy) |
 | `infra/sqldb` | Azure SQL Database | Banco de dados relacional gerenciado (tier serverless) |
 | `infra/github_oidc` | Azure AD App Registration + Federated Identity Credential | Autenticacao do GitHub Actions no Azure via OIDC, sem secrets de longa duracao (ver secao [CI/CD](#cicd)) |
+| `infra/apim` | Azure API Management (Consumption) | Gateway de API na frente do `ingress-nginx` (ver [API Gateway](#api-gateway) abaixo) |
 
 Dois arquivos na raiz de `infra/` (`keyvault_secrets.tf`, `aks_keyvault_access.tf`)
 conectam modulos entre si sem criar dependencia circular entre eles - cada
@@ -238,6 +239,7 @@ cp terraform.tfvars.example terraform.tfvars   # preencher os valores (nomes de 
 export TF_VAR_sql_administrator_login_password="<senha-forte>"
 export TF_VAR_jwt_secret_key="<chave-forte>"
 export TF_VAR_admin_senha="<senha-forte>"
+export TF_VAR_apim_publisher_email="<seu-email>"
 
 terraform init
 terraform plan    # revisar o que sera criado/alterado antes de aplicar
@@ -252,7 +254,7 @@ terraform apply
 > existe hoje, um `terraform init` normal e suficiente para quem for rodar a
 > partir daqui.
 
-O `terraform apply` cria todos os 8 modulos na ordem correta de dependencias
+O `terraform apply` cria todos os 9 modulos na ordem correta de dependencias
 (o proprio Terraform monta esse grafo a partir das referencias entre
 `module.*`, sem precisar de flags especiais) — do Resource Group ate o
 cluster AKS, Key Vault e a federacao OIDC do GitHub Actions. Para aplicar so
@@ -304,9 +306,82 @@ ignorado pelo Git).
 > Azure Blob Storage) e retencao de 72h — mais longa que as 6h do Prometheus
 > Caches de chunks/resultados do Loki (baseados em Memcached) e o canary de
 > teste E2E ficam desabilitados de proposito: o cluster tem 1 node so
-> (`Standard_D2s_v3`, 2 vCPU/8GiB), e cada um desses componentes adicionaria
+> (`Standard_D4as_v4`, 4 vCPU/16GiB), e cada um desses componentes adicionaria
 > outro Pod competindo pelo mesmo recurso escasso, sem necessidade real no
 > volume de log baixo deste projeto.
+
+### API Gateway
+
+O [Azure API Management](https://azure.microsoft.com/products/api-management)
+(`infra/apim`, tier **Consumption** — sempre gratis ate 1M chamadas/mes) fica
+**na frente** do `ingress-nginx`, nao o substitui: o `ingress-nginx` continua
+servindo Grafana/Prometheus/Jaeger/Mailpit diretamente e vira so o *backend*
+que a APIM chama pra rotear. Do ponto de vista de quem consome a API (ou o
+Grafana), o gateway da APIM passa a ser o novo endereco publico:
+
+```bash
+cd infra
+terraform output -raw apim_gateway_url   # https://<nome>.azure-api.net
+```
+
+- `https://<nome>.azure-api.net/oficinaserver/...` → API (Swagger UI incluso, em `/oficinaserver/index.html`)
+- `https://<nome>.azure-api.net/grafana/...` → Grafana
+
+Cada backend novo entra com o mesmo padrao de path (`<nome>server`, ex.:
+`segurancaserver` para um futuro serviço de autenticação/autorização) —
+`oficinaserver` segue essa convenção desde já.
+
+Modelo **wildcard/passthrough**, não import de OpenAPI: cada API é criada
+"em branco" na APIM, com uma operação coringa (`url_template = "/*"`) por
+método HTTP real (`GET`/`POST`/`PUT`/`DELETE`/`PATCH`), repassando qualquer
+path para o backend — inclusive o que nenhum OpenAPI documentaria (a própria
+Swagger UI, `/health`, `/metrics`). A troca em relação ao import de OpenAPI
+foi deliberada: cobertura total sem precisar resincronizar a APIM a cada
+mudança de endpoint, ao custo de não ter as operações individuais
+navegáveis no portal da APIM.
+
+> **Por que não `method = "*"`?** A APIM não tem um método HTTP curinga de
+> verdade — o provider Terraform aceita `method = "*"` sem erro, mas o
+> runtime da Azure nunca casa nenhuma request contra ele (404 silencioso
+> sempre). `infra/apim/main.tf` usa `for_each` sobre os métodos reais em vez
+> disso.
+
+O tier Consumption funciona aqui sem VNet porque só precisa alcançar
+backends públicos pela internet (não suporta VNet integration) — exatamente
+o que o LoadBalancer público do `ingress-nginx` já fornece.
+
+#### Headers `X-Forwarded-*` (por que o Swagger via gateway funciona)
+
+Pra Swagger UI, "Try it out" e os links do Grafana funcionarem corretamente
+atrás do prefixo da APIM (em vez de vazar o IP/host interno do backend), a
+policy de cada API (`azurerm_api_management_api_policy`) injeta
+`X-Forwarded-Proto`/`-Host`/`-Prefix` antes de encaminhar. Dois pontos eram
+necessários para esses headers realmente chegarem intactos até o pod, e sem
+qualquer um deles o sintoma era o mesmo (`servers[]` do Swagger com o IP cru
+do `ingress-nginx` em vez do host público da APIM):
+
+1. **`ingress-nginx` com `controller.config.use-forwarded-headers: true`**
+   (`infra/helm/main.tf`) — o default do chart é `false`, que faz o nginx
+   **descartar** os headers recebidos e preencher com o que ele mesmo
+   enxerga (scheme `http`, já que a APIM fala com o LoadBalancer em porta 80
+   sem TLS). Esse foi o bug mais sutil de diagnosticar: a policy da APIM e o
+   `Program.cs` já estavam corretos, mas o nginx no meio do caminho
+   descartava tudo silenciosamente antes de repassar pro pod.
+2. **`Program.cs`** registra `app.UseForwardedHeaders(...)` (com
+   `KnownNetworks`/`KnownProxies` limpos — o IP de quem repassa não é fixo
+   de antemão) e um middleware próprio lendo `X-Forwarded-Prefix` na mão
+   (não é um header que o `ForwardedHeadersMiddleware` nativo entende) para
+   setar `HttpRequest.PathBase`. O `SwaggerEndpoint(...)` usa um path
+   **relativo** (sem `/` inicial) — um path absoluto seria resolvido pelo
+   browser a partir da raiz do domínio, ignorando o prefixo `/oficinaserver`.
+
+Grafana usa `serve_from_sub_path: false` (não `true`) em
+`infra/helm/monitoring.yaml.tpl` de propósito: essa flag é para quando o
+próprio Grafana precisa *remover* o prefixo de requests que chegam com ele
+ainda anexado — mas aqui é o contrário, a policy da APIM já tira o
+`/grafana` antes de encaminhar pro backend. Com `true` (a configuração
+tentada primeiro, errada), o Grafana entrava num loop infinito de redirect
+em `/login` e `/`.
 
 ## Kubernetes
 
@@ -389,7 +464,8 @@ kubectl get secret monitoring-grafana -n monitoring -o jsonpath="{.data.admin-pa
 
 Login em `http://grafana.<IP-DO-INGRESS>.nip.io` (ou via `kubectl port-forward
 -n monitoring svc/monitoring-grafana 3000:80`, depois `http://localhost:3000`),
-usuario `admin` + a senha do comando acima.
+usuario `admin` + a senha do comando acima. Tambem acessivel via
+`https://<apim>.azure-api.net/grafana/` (ver [API Gateway](#api-gateway)).
 
 ### `k8s/mailpit/`
 

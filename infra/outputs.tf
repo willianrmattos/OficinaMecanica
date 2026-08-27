@@ -94,3 +94,8 @@ output "key_vault_secrets_provider_client_id" {
   value       = module.aks.key_vault_secrets_provider_client_id
 }
 
+output "apim_gateway_url" {
+  description = "URL publica do gateway da APIM - novo front door da API para os clientes."
+  value       = module.apim.gateway_url
+}
+

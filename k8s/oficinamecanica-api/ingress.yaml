@@ -7,6 +7,11 @@
 # API, sem necessidade de dominio. Ja em Grafana/Prometheus
 # (k8s/monitoring/ingress.yaml) usei host especifico porque os dois
 # compartilham o mesmo IP e precisam ser diferenciados.
+#
+# Esse comportamento (bater no IP puro, sem host) e exatamente o que o
+# Azure API Management (infra/apim/) usa como "service_url" - a APIM ficou
+# na frente disso como novo front door pros clientes da API, mas continua
+# chamando esse Ingress por baixo, sem mudar nada aqui.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:

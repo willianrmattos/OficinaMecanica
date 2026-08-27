@@ -63,3 +63,8 @@ variable "alloy_chart_version" {
   type        = string
   default     = "1.10.1"
 }
+
+variable "apim_name" {
+  description = "Nome da instancia do API Management (modulo infra/apim) - usado so pra montar a URL publica (<nome>.azure-api.net) que o Grafana precisa saber que esta servindo atras dela (grafana.ini server.root_url/serve_from_sub_path em monitoring.yaml.tpl). Variavel simples (nao module.apim.xxx) de proposito, pra nao criar dependencia circular entre os modulos helm e apim."
+  type        = string
+}

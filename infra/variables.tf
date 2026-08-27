@@ -100,6 +100,23 @@ variable "github_repo" {
   default     = "willianrmattos/OficinaMecanica"
 }
 
+variable "apim_name" {
+  description = "Nome da instancia do API Management (modulo apim). Globalmente unico (vira <nome>.azure-api.net)."
+  type        = string
+  default     = "apimfiap"
+}
+
+variable "apim_publisher_name" {
+  description = "Nome do publisher exibido no portal da APIM."
+  type        = string
+  default     = "OficinaMecanica"
+}
+
+variable "apim_publisher_email" {
+  description = "E-mail do publisher da APIM (usado pela Azure para notificacoes). Sem valor padrao: definir via TF_VAR_apim_publisher_email ou um .tfvars nao versionado."
+  type        = string
+}
+
 variable "tags" {
   description = "Tags aplicadas a todos os recursos."
   type        = map(string)

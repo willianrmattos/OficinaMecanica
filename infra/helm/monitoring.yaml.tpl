@@ -35,6 +35,25 @@ prometheus:
               storage: 8Gi
 
 grafana:
+  # Serve atras do Azure API Management (infra/apim/, path "/grafana") -
+  # sem isso, links/redirects que o proprio Grafana gera internamente
+  # (login, assets estaticos) saem sem o prefixo "/grafana", quebrando a
+  # navegacao no browser quando acessado via APIM (o acesso direto via
+  # ingress-nginx, sem prefixo, continua funcionando normalmente de
+  # qualquer forma - esse root_url so afeta como o Grafana MONTA seus
+  # proprios links, nao onde ele aceita conexao).
+  #
+  # serve_from_sub_path = false (nao true) de proposito: essa flag e pra
+  # quando o proprio Grafana precisa REMOVER o prefixo das requests que
+  # recebe (reverse proxy so repassa, sem reescrever nada). Aqui e o
+  # contrario - a policy da APIM (infra/apim/) ja tira o "/grafana" antes
+  # de encaminhar pro backend (confirmado testando /grafana/api/health),
+  # entao o Grafana recebe os paths sem prefixo mesmo, so precisa do
+  # root_url certo pra montar os links de volta.
+  "grafana.ini":
+    server:
+      root_url: "https://${apim_gateway_host}/grafana/"
+      serve_from_sub_path: false
   persistence:
     enabled: true
     storageClassName: ${storage_class_name}

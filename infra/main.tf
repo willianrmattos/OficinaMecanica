@@ -51,6 +51,7 @@ module "helm" {
   source = "./helm"
 
   storage_class_name = var.monitoring_storage_class_name
+  apim_name          = var.apim_name
 
   depends_on = [module.aks]
 }
@@ -74,4 +75,16 @@ module "github_oidc" {
   github_repo = var.github_repo
   acr_id      = module.acr.registry_id
   aks_id      = module.aks.cluster_id
+}
+
+module "apim" {
+  source = "./apim"
+
+  location                = module.rg.location
+  resource_group_name     = module.rg.resource_group_name
+  apim_name               = var.apim_name
+  publisher_name          = var.apim_publisher_name
+  publisher_email         = var.apim_publisher_email
+  ingress_nginx_namespace = module.helm.release_namespace
+  tags                    = var.tags
 }
