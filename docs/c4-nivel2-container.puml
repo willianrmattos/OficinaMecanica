@@ -10,10 +10,10 @@ Person(admin, "Administrador", "Usuario autenticado com JWT")
 Person_Ext(cliente, "Cliente Final", "Acesso anonimo a endpoints publicos")
 System_Ext(smtp, "Servidor SMTP", "Mailpit (dev) - notificacoes de status por e-mail")
 
-Container(apim, "Azure API Management", "Consumption tier", "Gateway na frente do ingress-nginx (que vira so backend). Modelo wildcard/passthrough por API - path /oficinaserver pra API, /grafana pro Grafana, sem exigir subscription key (a API ja tem seu proprio JWT + rotas publicas de proposito).")
+Container(apim, "Azure API Management", "Consumption tier", "Gateway na frente de todos os backends. Modelo wildcard/passthrough por API - path /oficinaserver pra API (via ingress-nginx), /grafana pro Grafana (via ingress-nginx), /segurancaserver pro Seguranca (Azure Function, backend publico direto). Sem exigir subscription key (cada backend ja tem seu proprio controle de acesso).")
 
 System_Boundary(oficina, "OficinaMecanica (AKS)") {
-    Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. Valida entradas com FluentValidation. Emite metricas (prometheus-net), logs (Serilog) e traces (OpenTelemetry). Escalada de 2 a 5 replicas via HPA.")
+    Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. So VALIDA tokens JWT (RS256/JWKS, emitidos pelo OficinaMecanica.Seguranca) - nao emite mais nenhum. Valida entradas com FluentValidation. Emite metricas (prometheus-net), logs (Serilog) e traces (OpenTelemetry). Escalada de 2 a 5 replicas via HPA.")
     ContainerDb(db, "OficinaMecanicaDb", "Azure SQL Database", "Persiste clientes, veiculos, servicos, pecas, ordens de servico e historico de status. Concorrencia otimista com ConcurrencyToken. Tier serverless sempre-gratis.")
 
     Container(prometheus, "Prometheus", "kube-prometheus-stack", "Coleta e armazena metricas via scrape periodico do endpoint /metrics.")
@@ -23,12 +23,20 @@ System_Boundary(oficina, "OficinaMecanica (AKS)") {
     Container(jaeger, "Jaeger", "All-in-one", "Recebe e armazena os traces distribuidos exportados pela API via OTLP.")
 }
 
+System_Boundary(seguranca_sys, "OficinaMecanica.Seguranca (repositorio separado)") {
+    Container(seguranca, "OficinaMecanica.Seguranca", ".NET 8 / Azure Functions (isolated worker)", "Emite tokens JWT (RS256) e expoe a chave publica via JWKS (/.well-known/jwks.json), pra qualquer API do ecossistema validar sem segredo compartilhado. Tier Consumption. Sem AKS - endpoint HTTPS publico proprio.")
+    ContainerDb(segurancaDb, "SegurancaDb", "Azure SQL Database", "Persiste usuarios (senha com hash BCrypt). Banco separado, mesmo servidor logico do OficinaMecanicaDb.")
+}
+
+Rel(admin, apim, "Autentica (login)", "HTTPS / REST")
 Rel(admin, apim, "Chama endpoints administrativos", "HTTPS / REST / JWT Bearer")
 Rel(admin, apim, "Visualiza dashboards, logs e traces", "HTTPS")
 Rel(cliente, apim, "Consulta OS e aprova ou recusa orcamento", "HTTPS / REST (anonimo)")
 Rel(apim, api, "Roteia /oficinaserver via ingress-nginx (backend publico, wildcard passthrough)", "HTTP")
 Rel(apim, grafana, "Roteia /grafana via ingress-nginx (backend publico, wildcard passthrough)", "HTTP")
+Rel(apim, seguranca, "Roteia /segurancaserver (backend publico direto, sem AKS/ingress-nginx no meio)", "HTTPS")
 Rel(api, db, "Le e escreve via EF Core", "TCP 1433 / TDS")
+Rel(seguranca, segurancaDb, "Le e escreve via EF Core", "TCP 1433 / TDS")
 Rel(api, smtp, "Envia notificacao a cada mudanca de status", "SMTP (MailKit)")
 Rel(smtp, cliente, "Entrega notificacao", "E-mail")
 

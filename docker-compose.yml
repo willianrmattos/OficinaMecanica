@@ -12,16 +12,16 @@ services:
       ASPNETCORE_ENVIRONMENT: "Development"
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
       ConnectionStrings__DefaultConnection: "Server=tcp:sqlserver,1433;Database=OficinaMecanicaDb;User Id=sa;Password=${MSSQL_SA_PASSWORD};Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
-      JwtSettings__SecretKey: "${JWT_SECRET_KEY}"
-      JwtSettings__Issuer: "OficinaMecanica.API"
+      JwtSettings__Issuer: "OficinaMecanica.Seguranca"
       JwtSettings__Audience: "OficinaMecanica.Client"
-      JwtSettings__ExpiracaoMinutos: "60"
-      AdminCredentials__Usuario: "${ADMIN_USUARIO}"
-      AdminCredentials__Senha: "${ADMIN_SENHA}"
+      # Aponta pro OficinaMecanica.Seguranca RODANDO LOCAL 
+      JwtSettings__JwksUri: "http://host.docker.internal:7071/.well-known/jwks.json"
       Smtp__Host: "mailpit"
       Smtp__Port: "1025"
       Smtp__Remetente: "no-reply@oficinamecanica.local"
       Otel__Endpoint: "http://jaeger:4317"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "5000:8080"
 

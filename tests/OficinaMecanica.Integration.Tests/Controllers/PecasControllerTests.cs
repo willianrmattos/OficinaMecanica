@@ -22,11 +22,7 @@ public class PecasControllerTests : IClassFixture<CustomWebApplicationFactory>
 
     private async Task<string> ObterTokenAsync()
     {
-        var response = await _client.PostAsJsonAsync("/api/auth/login",
-            new { Usuario = "admin", Senha = "Admin@123" });
-        var content = await response.Content.ReadAsStringAsync();
-        var json = JsonDocument.Parse(content);
-        return json.RootElement.GetProperty("token").GetString()!;
+        return await Task.FromResult(TestTokenFactory.GerarToken(_factory));
     }
 
     private async Task<Guid> SeedPecaAsync(string nome = "Peca Seed")

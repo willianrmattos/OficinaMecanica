@@ -1,4 +1,4 @@
-# Criei este dashboard como codigo (ver infra/helm/monitoring.yaml.tpl,
+# Criei este dashboard como codigo (ver OficinaMecanica.Infra/helm/monitoring.yaml.tpl,
 # grafana.sidecar.dashboards): o sidecar do Grafana monitora ConfigMaps com o
 # label abaixo em qualquer namespace e os importa automaticamente, sem
 # necessidade de qualquer acao manual na UI. A fonte da verdade e este

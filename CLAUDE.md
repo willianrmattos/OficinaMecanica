@@ -10,7 +10,7 @@ Backend .NET 8 com DDD, Clean Architecture e CQRS (MediatR) para gestao de ofici
 src/
   OficinaMecanica.Domain/          # Entidades, Value Objects, Enums, Domain Events, Interfaces
   OficinaMecanica.Application/     # Commands, Queries, Handlers (MediatR), DTOs, Validators (FluentValidation), Event Handlers, Interfaces (ex: IEmailService)
-  OficinaMecanica.Infrastructure/  # EF Core (Azure SQL Database), Repositories, JWT Auth, Token Service, SmtpEmailService (MailKit)
+  OficinaMecanica.Infrastructure/  # EF Core (Azure SQL Database), Repositories, JWT Auth (so validacao via JWKS), SmtpEmailService (MailKit)
   OficinaMecanica.API/             # Controllers REST, ExceptionHandlingMiddleware, Swagger, Program.cs
 tests/
   OficinaMecanica.Domain.Tests/       # Testes unitarios (entidades, VOs, regras de negocio)
@@ -88,10 +88,52 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 
 ## Autenticacao
 
-- JWT Bearer com credenciais configuradas em `appsettings.json` (AdminCredentials)
+- A API so **valida** JWT Bearer, nao emite mais nada — login/token viraram
+  responsabilidade exclusiva do `OficinaMecanica.Seguranca` (repositorio
+  irmao, Azure Function separada), extraido daqui. `AuthController`/
+  `TokenService`/`ITokenService`/`AdminCredentials` foram removidos por
+  completo desta base de codigo.
+- Validacao via **RS256/JWKS**, nao mais uma chave simetrica fixa:
+  `DependencyInjection.cs` monta um `ConfigurationManager<JsonWebKeySet>`
+  (com um `JsonWebKeySetRetriever` proprio — a classe com esse nome citada
+  em alguma documentacao do `Microsoft.IdentityModel.Protocols` nao existe
+  de verdade no pacote, so tem retriever pronto pra documento OIDC completo,
+  nao pra um JWKS cru) que busca e cacheia a chave publica periodicamente
+  em `JwtSettings:JwksUri`, resolvendo por `kid` via
+  `TokenValidationParameters.IssuerSigningKeyResolver`. `JwtSettings:Issuer`
+  precisa bater com o que o Seguranca realmente emite
+  (`"OficinaMecanica.Seguranca"`, nao mais `"OficinaMecanica.API"`).
+- O `HttpDocumentRetriever` usado pelo `ConfigurationManager<JsonWebKeySet>`
+  recusa por padrao qualquer `JwksUri` que nao seja `https://`
+  (`RequireHttps = true`) — em producao nunca aparece (a APIM real e
+  HTTPS), mas o `docker-compose.yml` local aponta pro Seguranca rodando sem
+  TLS (`http://host.docker.internal:7071/...`, `extra_hosts:
+  host-gateway` pra alcancar o outro projeto de Compose). Por isso
+  `DependencyInjection.cs` monta esse retriever manualmente com
+  `RequireHttps` condicional ao esquema da propria `JwksUri` configurada,
+  em vez de deixar o `ConfigurationManager` criar um por conta propria.
+- **Pegadinha de dev local**: o `ConfigurationManager<JsonWebKeySet>` cacheia
+  o JWKS buscado (nao refaz o fetch a cada validacao). Quando o
+  `OficinaMecanica.Seguranca` local roda com o fallback de chave RSA
+  efemera (`KeyVault:Uri` vazio — ver `CLAUDE.md` dele), cada restart do
+  container gera uma chave nova só que com o **mesmo `kid` fixo**
+  (`"local-dev"`) — o monolito acha uma chave com o `kid` esperado (nao
+  refaz o fetch) mas ela nao bate mais, e a validacao falha com
+  `"The signature is invalid"` (nao "chave nao encontrada"). Se isso
+  acontecer testando local, o fix e reiniciar o container `api` do
+  monolito (`docker compose restart api`) pra forcar um fetch novo do JWKS
+  atual, depois gerar um token novo no Seguranca.
 - Endpoints publicos: consulta OS por numero (`/api/ordens-de-servico/numero/{numero}`), aprovacao (`/api/ordens-de-servico/{id}/aprovar`) e recusa de orcamento (`/api/ordens-de-servico/{id}/recusar`)
 - `/health` e `/metrics` tambem sao anonimos (nao passam por `[Authorize]`, mapeados via `MapHealthChecks`/`MapMetrics` fora do `MapControllers()`) — ver secao "Observabilidade"
 - Demais endpoints exigem token JWT
+- Testes de integracao (`CustomWebApplicationFactory.cs`) nao dependem do
+  JWKS real pela rede: cada factory tem sua propria instancia de chave RSA
+  (`TestSigningKey`, uma por classe de teste via `IClassFixture` — **nao**
+  um campo `static` compartilhado, RSA nao e thread-safe pra assinar/validar
+  concorrentemente entre classes rodando em paralelo, isso ja causou falha
+  intermitente real) e um `PostConfigure<JwtBearerOptions>` que sobrescreve
+  so a resolucao da chave pra essa instancia fixa. `TestTokenFactory.GerarToken(factory)`
+  monta o JWT de teste assinado com a mesma chave.
 
 ## Listagem de Ordens de Servico
 
@@ -123,7 +165,7 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 - Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra qualquer um dos dois bancos acima, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
 - No Docker Compose, a connection string do `sqlserver` local e montada direto no `docker-compose.yml` (usuario `sa`, senha vinda de `MSSQL_SA_PASSWORD` no `.env`) — nao ha mais dependencia do Azure SQL pra desenvolvimento local
 - `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env`/`docker-compose.yml` sempre tem precedencia quando rodando via `docker compose`
-- O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `MSSQL_SA_PASSWORD` (SQL Server local), `GRAFANA_ADMIN_PASSWORD` (Grafana local), `JWT_SECRET_KEY`, `ADMIN_USUARIO`/`ADMIN_SENHA` (login da API), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
+- O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `MSSQL_SA_PASSWORD` (SQL Server local), `GRAFANA_ADMIN_PASSWORD` (Grafana local), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
 
 ## Observabilidade
 
@@ -139,7 +181,7 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 ## Docker
 
 Servicos no docker compose (`docker compose up -d` sobe todos):
-- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — le SQL/JWT/AdminCredentials/Smtp/Otel, todos via `.env`
+- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — le SQL/JwksUri/Smtp/Otel, todos via `.env`
 - **oficinamecanica-sqlserver**: SQL Server 2022 (edicao Developer), banco local — separado do Azure SQL Database usado em producao/AKS, que continua intacto (ver secao "Banco de Dados")
 - **oficinamecanica-sonar**: SonarQube 10 Community, porta 9000
 - **oficinamecanica-sonar-db**: PostgreSQL 15 (banco do SonarQube), interno
@@ -203,9 +245,8 @@ k8s/
 
 - **`deployment.yaml`**: `oficinamecanica-api`, 2 replicas (valor inicial — quem
   controla depois e o HPA), imagem `acrfiap.azurecr.io/oficinamecanica-api:latest`.
-  Sem `imagePullSecrets` (kubelet do AKS ja tem `AcrPull` via Terraform). Env vars
-  sensiveis (`ConnectionStrings__DefaultConnection`, `JwtSettings__SecretKey`,
-  `AdminCredentials__Senha`) vem de `secretKeyRef` apontando pro Secret
+  Sem `imagePullSecrets` (kubelet do AKS ja tem `AcrPull` via Terraform). Env var
+  sensivel (`ConnectionStrings__DefaultConnection`) vem de `secretKeyRef` apontando pro Secret
   `oficinamecanica-secrets` — esse Secret e sincronizado automaticamente pelo
   CSI Secrets Store driver (ver `secret-provider-class.yaml` abaixo), nao mais
   aplicado a mao. Por isso o Deployment tambem monta um volume `secrets-store`

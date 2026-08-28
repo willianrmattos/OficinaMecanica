@@ -94,8 +94,6 @@ Microsoft). Antes de subir o compose, copie `.env.example` para
 |---|---|
 | `MSSQL_SA_PASSWORD` | Senha do usuario `sa` do SQL Server local (container `sqlserver`) |
 | `GRAFANA_ADMIN_PASSWORD` | Senha do usuario `admin` do Grafana local (container `grafana`) |
-| `JWT_SECRET_KEY` | Chave usada para assinar os tokens JWT |
-| `ADMIN_USUARIO` / `ADMIN_SENHA` | Credenciais de login da API (`POST /api/auth/login`) |
 | `SONAR_DB_USER` / `SONAR_DB_PASSWORD` | Credenciais do Postgres interno do SonarQube |
 | `SONAR_ADMIN_PASSWORD` | Senha definida pro admin do SonarQube no primeiro boot |
 
@@ -106,7 +104,7 @@ docker compose up -d
 
 | Servico | URL | Credenciais |
 |---------|-----|-------------|
-| API + Swagger | http://localhost:5000 | `ADMIN_USUARIO` / `ADMIN_SENHA` (`.env`) |
+| API + Swagger | http://localhost:5000 | Sem login proprio — token JWT vem do [OficinaMecanica.Seguranca](#autenticacao) |
 | SonarQube | http://localhost:9000 | admin / `SONAR_ADMIN_PASSWORD` (`.env`) |
 | Mailpit (e-mails capturados) | http://localhost:8025 | — |
 | Jaeger (traces distribuidos) | http://localhost:16686 | — |
@@ -264,9 +262,10 @@ kubectl get pods
 | `hpa.yaml` | HorizontalPodAutoscaler | Escala de 2 a 5 replicas por CPU/memoria |
 | `secret-provider-class.yaml` | SecretProviderClass | Lê os segredos da aplicação direto do Key Vault e sincroniza para um Secret nativo |
 
-As credenciais sensíveis (connection string, chave JWT, senha do admin) ficam
-no Azure Key Vault (`OficinaMecanica.Infra/keyvault_secrets.tf`), não mais em um arquivo
-aplicado manualmente. O CSI Secrets Store driver sincroniza esses valores
+A credencial sensível (connection string do banco) fica no Azure Key Vault
+(`OficinaMecanica.Infra/keyvault_secrets.tf`), não mais em um arquivo
+aplicado manualmente — a API não tem mais nenhum segredo próprio de JWT/admin
+(ver seção [Autenticacao](#autenticacao)). O CSI Secrets Store driver sincroniza esses valores
 para o Secret nativo `oficinamecanica-secrets` automaticamente, assim que o
 Deployment monta o `SecretProviderClass` como volume:
 
@@ -303,7 +302,7 @@ kubectl get secret monitoring-grafana -n monitoring -o jsonpath="{.data.admin-pa
 Login em `http://grafana.<IP-DO-INGRESS>.nip.io` (ou via `kubectl port-forward
 -n monitoring svc/monitoring-grafana 3000:80`, depois `http://localhost:3000`),
 usuario `admin` + a senha do comando acima. Tambem acessivel via
-`https://<apim>.azure-api.net/grafana/` (ver [API Gateway](#api-gateway)).
+`https://<apim>.azure-api.net/grafana/` (ver [OficinaMecanica.Infra](../OficinaMecanica.Infra), onde o API Gateway esta documentado).
 
 ### `k8s/mailpit/`
 
@@ -421,7 +420,7 @@ localmente — a instancia atual vive dentro do Docker Compose do
 desenvolvedor, inalcancavel pelo runner do GitHub Actions. Migrar pra uma
 instancia acessivel (ex: SonarCloud) integraria isso ao job
 `build-and-test`. O provisionamento da infraestrutura (Terraform) tambem
-continua manual (ver [Provisionando a infraestrutura](#provisionando-a-infraestrutura)) — so o deploy da *aplicacao* e automatizado hoje.
+continua manual (ver [Infraestrutura](#infraestrutura)) — so o deploy da *aplicacao* e automatizado hoje.
 
 ## Endpoints da API
 
@@ -444,11 +443,22 @@ As tabelas abaixo resumem as mesmas rotas, agrupadas por area, para referencia r
 | GET | /metrics | Nao | Metricas no formato Prometheus (scraped via `k8s/monitoring/servicemonitor.yaml`) |
 
 ### Autenticacao
-| Metodo | Rota | Descricao |
-|--------|------|-----------|
-| POST | /api/auth/login | Login (retorna JWT) |
 
-Credenciais: valor de `ADMIN_USUARIO`/`ADMIN_SENHA` no `.env` (rodando via Docker) ou `AdminCredentials` no `appsettings.json` (rodando localmente) — default sugerido nos dois: `admin` / `Admin@123`
+Esta API **so valida** tokens JWT (RS256), nao emite mais nenhum — login e
+emissao de token sao responsabilidade exclusiva do
+[OficinaMecanica.Seguranca](../OficinaMecanica.Seguranca) (repositorio
+irmao, Azure Function separada). Pra obter um token:
+
+```bash
+curl -X POST https://apimfiap.azure-api.net/segurancaserver/login \
+  -H "Content-Type: application/json" \
+  -d '{"nomeUsuario":"admin","senha":"<senha>"}'
+```
+
+A chave publica usada pra validar a assinatura e resolvida dinamicamente via
+JWKS (`JwtSettings:JwksUri`, ver `appsettings.json`), buscada
+periodicamente do proprio Seguranca — nao ha segredo compartilhado entre os
+dois repositorios.
 
 ### Clientes
 | Metodo | Rota | Autenticado | Descricao |

@@ -1,5 +1,5 @@
 # Criei este recurso para indicar ao Prometheus (instalado via
-# infra/helm/monitoring.tf) onde buscar metricas do oficinamecanica-api. Sem
+# OficinaMecanica.Infra/helm/monitoring.tf) onde buscar metricas do oficinamecanica-api. Sem
 # isso, mesmo com a API expondo /metrics, o Prometheus nao sabe que precisa
 # fazer scrape neste endpoint.
 apiVersion: monitoring.coreos.com/v1

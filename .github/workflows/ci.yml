@@ -124,7 +124,7 @@ jobs:
       # Usei admin: true pra buscar o kubeconfig via credenciais de
       # administrador do cluster (contas locais, nao Azure RBAC de
       # autorizacao dentro do Kubernetes) - exige a role "Azure Kubernetes
-      # Service Cluster Admin Role" (infra/github_oidc/main.tf) no Service
+      # Service Cluster Admin Role" (OficinaMecanica.Infra/github_oidc/main.tf) no Service
       # Principal do GitHub Actions.
       - name: Set AKS context
         uses: azure/aks-set-context@v4

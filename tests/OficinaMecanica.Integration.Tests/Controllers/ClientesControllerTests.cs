@@ -2,26 +2,23 @@ using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using FluentAssertions;
-using System.Text.Json;
 
 namespace OficinaMecanica.Integration.Tests.Controllers;
 
 public class ClientesControllerTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly HttpClient _client;
+    private readonly CustomWebApplicationFactory _factory;
 
     public ClientesControllerTests(CustomWebApplicationFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
     }
 
     private async Task<string> ObterTokenAsync()
     {
-        var response = await _client.PostAsJsonAsync("/api/auth/login",
-            new { Usuario = "admin", Senha = "Admin@123" });
-        var content = await response.Content.ReadAsStringAsync();
-        var json = JsonDocument.Parse(content);
-        return json.RootElement.GetProperty("token").GetString()!;
+        return await Task.FromResult(TestTokenFactory.GerarToken(_factory));
     }
 
     [Fact]

@@ -9,7 +9,7 @@ spec:
   # controlada pelo HorizontalPodAutoscaler (k8s/oficinamecanica-api/hpa.yaml),
   # entre minReplicas e maxReplicas.
   replicas: 2
-  # maxSurge: 0 porque o node unico do cluster (infra/aks) nao tem CPU sobrando
+  # maxSurge: 0 porque o node unico do cluster (OficinaMecanica.Infra/aks) nao tem CPU sobrando
   # pra criar um pod extra durante o rollout (o padrao do Kubernetes, 25%,
   # arredonda pra +1 pod pra cima da contagem atual) - isso fazia o
   # "Deploy new image" do CI/CD (.github/workflows/ci.yml) travar esperando um
@@ -29,7 +29,7 @@ spec:
         app: oficinamecanica-api
     spec:
       # Nao configurei imagePullSecrets: o kubelet do AKS ja possui permissao
-      # de pull no ACR via role assignment (infra/aks/main.tf).
+      # de pull no ACR via role assignment (OficinaMecanica.Infra/aks/main.tf).
       # A API nao precisa falar com a API do Kubernetes, entao desabilitei o
       # automount do token da service account (reduz superficie de ataque).
       automountServiceAccountToken: false
@@ -44,13 +44,11 @@ spec:
             - name: DOTNET_SYSTEM_GLOBALIZATION_INVARIANT
               value: "false"
             - name: JwtSettings__Issuer
-              value: "OficinaMecanica.API"
+              value: "OficinaMecanica.Seguranca"
             - name: JwtSettings__Audience
               value: "OficinaMecanica.Client"
-            - name: JwtSettings__ExpiracaoMinutos
-              value: "60"
-            - name: AdminCredentials__Usuario
-              value: "admin"
+            - name: JwtSettings__JwksUri
+              value: "https://apimfiap.azure-api.net/segurancaserver/.well-known/jwks.json"
             - name: Smtp__Host
               value: "mailpit"
             - name: Smtp__Port
@@ -64,16 +62,6 @@ spec:
                 secretKeyRef:
                   name: oficinamecanica-secrets
                   key: sql-connection-string
-            - name: JwtSettings__SecretKey
-              valueFrom:
-                secretKeyRef:
-                  name: oficinamecanica-secrets
-                  key: jwt-secret-key
-            - name: AdminCredentials__Senha
-              valueFrom:
-                secretKeyRef:
-                  name: oficinamecanica-secrets
-                  key: admin-senha
           readinessProbe:
             httpGet:
               path: /health

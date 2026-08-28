@@ -1,4 +1,3 @@
-using System.Text;
 using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Domain.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
@@ -8,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Tokens;
 
 namespace OficinaMecanica.Infrastructure;
@@ -33,15 +33,22 @@ public static class DependencyInjection
         services.AddScoped<IPecaRepository, PecaRepository>();
         services.AddScoped<IOrdemDeServicoRepository, OrdemDeServicoRepository>();
 
-        // Token Service
-        services.AddScoped<ITokenService, TokenService>();
-
         // Email Service
         services.AddScoped<IEmailService, SmtpEmailService>();
 
-        // JWT Authentication
+        // JWT Authentication - so valida tokens RS256 emitidos pelo OficinaMecanica.Seguranca,
+        // buscando a chave publica dinamicamente via JWKS (nao emite mais token aqui)
         var jwtSettings = configuration.GetSection("JwtSettings");
-        var secretKey = jwtSettings["SecretKey"]!;
+        var jwksUri = jwtSettings["JwksUri"]!;
+        // HttpDocumentRetriever recusa URL http:// por padrao (RequireHttps = true) - em
+        // producao o JwksUri sempre passa pela APIM (https), mas em dev local o Seguranca
+        // roda sem TLS (http://host.docker.internal:7071/...), entao precisa liberar so
+        // nesse caso.
+        var documentRetriever = new HttpDocumentRetriever
+        {
+            RequireHttps = jwksUri.StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+        };
+        var configManager = new ConfigurationManager<JsonWebKeySet>(jwksUri, new JsonWebKeySetRetriever(), documentRetriever);
 
         services.AddAuthentication(options =>
         {
@@ -58,7 +65,8 @@ public static class DependencyInjection
                 ValidateIssuerSigningKey = true,
                 ValidIssuer = jwtSettings["Issuer"],
                 ValidAudience = jwtSettings["Audience"],
-                IssuerSigningKey = new SymmetricSecurityKey(Encoding.UTF8.GetBytes(secretKey)),
+                IssuerSigningKeyResolver = (token, securityToken, kid, validationParameters) =>
+                    configManager.GetConfigurationAsync().GetAwaiter().GetResult().Keys.Where(k => k.Kid == kid),
                 ClockSkew = TimeSpan.Zero
             };
         });

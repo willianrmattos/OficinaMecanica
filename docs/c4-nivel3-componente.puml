@@ -15,9 +15,7 @@ Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 
     Component(middleware, "ExceptionHandlingMiddleware", "ASP.NET Core Middleware", "Captura DomainException (409), ValidationException (400) e excecoes genericas (500). Retorna ProblemDetails sem expor stack trace.")
 
-    Component(controllers, "Controllers REST", "ASP.NET Core [ApiController]", "AuthController, ClientesController, VeiculosController, ServicosController, PecasController, OrdensDeServicoController.")
-
-    Component(tokenSvc, "TokenService", "ITokenService / JWT", "Gera tokens JWT com HMAC-SHA256, issuer, audience e expiracao configurados via JwtSettings.")
+    Component(controllers, "Controllers REST", "ASP.NET Core [ApiController]", "ClientesController, VeiculosController, ServicosController, PecasController, OrdensDeServicoController. Sem AuthController/TokenService - login e emissao de token viraram responsabilidade exclusiva do OficinaMecanica.Seguranca (repositorio separado); esta API so valida o JWT (RS256/JWKS) via middleware de autenticacao padrao do ASP.NET Core.")
 
     Component(pipeline, "ValidationBehavior", "MediatR IPipelineBehavior", "Intercepta todo Command e Query. Executa FluentValidation e lanca ValidationException se invalido.")
 
@@ -43,7 +41,6 @@ Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 Rel_D(admin, middleware, "Requisicoes autenticadas (JWT Bearer)", "HTTPS")
 Rel_D(cliente, middleware, "Consulta OS e aprova ou recusa orcamento", "HTTPS")
 Rel_D(middleware, controllers, "Repassa apos tratamento de erros")
-Rel(controllers, tokenSvc, "Solicita token JWT", "ITokenService")
 Rel_D(controllers, pipeline, "Despacha Command ou Query", "IMediator.Send")
 Rel_D(pipeline, cmdHandlers, "Encaminha apos validacao")
 Rel_D(pipeline, qryHandlers, "Encaminha apos validacao")

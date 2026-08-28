@@ -17,13 +17,13 @@ skinparam ArrowColor     #555555
 skinparam ArrowFontColor #555555
 skinparam ArrowFontSize  10
 
-rectangle "Interface Adapters - API\n\nClientesController  VeiculosController  ServicosController\nPecasController  OrdensDeServicoController  AuthController\nExceptionHandlingMiddleware  Program.cs" as api #BBDEFB
+rectangle "Interface Adapters - API\n\nClientesController  VeiculosController  ServicosController\nPecasController  OrdensDeServicoController\nExceptionHandlingMiddleware  Program.cs" as api #BBDEFB
 
 rectangle "Use Cases - Application\n\nCommands + Handlers: CriarCliente, AtualizarCliente, CriarOrdemDeServico, AprovarOrcamento, RecusarOrcamento ...\nQueries + Handlers: ObterCliente, ListarClientes, ObterOrdemDeServico, ListarOrdensDeServico, ObterTempoMedio ...\nEvent Handlers: StatusOrdemAlteradoEventHandler (notificacao por e-mail)\nValidators (FluentValidation)  ValidationBehavior (MediatR Pipeline)  DTOs  Interfaces: IEmailService" as app #FFCDD2
 
 rectangle "Entities - Domain\n\nAggregates: Cliente  OrdemDeServico  Servico  Peca\nEntities: Veiculo  ItemServico  ItemPeca  HistoricoStatus\nValue Objects: Documento (CPF/CNPJ)  Placa\nDomain Events (inclui OrcamentoRecusadoEvent)  DomainException  Interfaces: IRepository  IUnitOfWork" as dom #FFF9C4
 
-rectangle "Interface Adapters - Infrastructure\n\nAppDbContext (IUnitOfWork)  ClienteRepository  VeiculoRepository\nServicoRepository  PecaRepository  OrdemDeServicoRepository\nEF Configurations (Fluent API)  Migrations  TokenService (JWT)  SmtpEmailService (MailKit)" as infra #BBDEFB
+rectangle "Interface Adapters - Infrastructure\n\nAppDbContext (IUnitOfWork)  ClienteRepository  VeiculoRepository\nServicoRepository  PecaRepository  OrdemDeServicoRepository\nEF Configurations (Fluent API)  Migrations  Validacao JWT (JWKS)  SmtpEmailService (MailKit)" as infra #BBDEFB
 
 rectangle "Frameworks and Drivers\n\nAzure SQL Database  ASP.NET Core 8  EF Core 8  MediatR  FluentValidation\nSerilog  MailKit  Docker  xUnit  Moq  FluentAssertions  Bogus" as fw #C8E6C9
 

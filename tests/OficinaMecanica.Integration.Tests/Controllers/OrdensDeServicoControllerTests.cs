@@ -8,9 +8,11 @@ namespace OficinaMecanica.Integration.Tests.Controllers;
 public class OrdensDeServicoControllerTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly HttpClient _client;
+    private readonly CustomWebApplicationFactory _factory;
 
     public OrdensDeServicoControllerTests(CustomWebApplicationFactory factory)
     {
+        _factory = factory;
         _client = factory.CreateClient();
     }
 
@@ -33,10 +35,6 @@ public class OrdensDeServicoControllerTests : IClassFixture<CustomWebApplication
 
     private async Task<string> ObterTokenAsync()
     {
-        var response = await _client.PostAsJsonAsync("/api/auth/login",
-            new { Usuario = "admin", Senha = "Admin@123" });
-        var content = await response.Content.ReadAsStringAsync();
-        var json = System.Text.Json.JsonDocument.Parse(content);
-        return json.RootElement.GetProperty("token").GetString()!;
+        return await Task.FromResult(TestTokenFactory.GerarToken(_factory));
     }
 }

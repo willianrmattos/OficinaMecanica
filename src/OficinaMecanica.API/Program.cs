@@ -99,7 +99,7 @@ forwardedHeadersOptions.KnownProxies.Clear();
 app.UseForwardedHeaders(forwardedHeadersOptions);
 
 // Le o prefixo que a APIM manda (header X-Forwarded-Prefix, setado via
-// policy em infra/apim/) e ajusta o PathBase da request - sem isso, os
+// policy em OficinaMecanica.Infra/apim/) e ajusta o PathBase da request - sem isso, os
 // links absolutos que o Swagger saem sem o prefixo.
 app.Use((context, next) =>
 {

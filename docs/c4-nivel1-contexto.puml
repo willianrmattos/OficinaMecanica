@@ -10,7 +10,9 @@ Person(admin, "Administrador", "Responsavel pela oficina. Gerencia clientes, vei
 Person_Ext(cliente, "Cliente Final", "Proprietario do veiculo. Acompanha o status da OS e aprova ou recusa o orcamento via links publicos, sem necessidade de conta.")
 
 System(oficina, "OficinaMecanica API", "Sistema backend para gestao de oficina mecanica. Controla o fluxo de Ordens de Servico, estoque de pecas, cadastro de clientes e veiculos.")
+System(seguranca, "OficinaMecanica.Seguranca", "Sistema de autenticacao e autorizacao do ecossistema. Emite tokens JWT (RS256) e expoe a chave publica (JWKS) para validacao.")
 
+Rel(admin, seguranca, "Autentica via", "HTTPS / REST")
 Rel(admin, oficina, "Gerencia via", "HTTPS / REST / JWT Bearer")
 Rel(cliente, oficina, "Consulta status e aprova ou recusa orcamento via", "HTTPS / REST (anonimo)")
 Rel(oficina, cliente, "Notifica mudancas de status da OS via", "E-mail")
