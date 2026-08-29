@@ -20,7 +20,13 @@ public static class DependencyInjection
         services.AddDbContext<AppDbContext>(options =>
             options.UseSqlServer(
                 configuration.GetConnectionString("DefaultConnection"),
-                b => b.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)
+                b => b
+                    .MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)
+                    // Azure SQL Database serverless pausa por inatividade (auto_pause_delay_in_minutes,
+                    // ver OficinaMecanica.Infra) - a primeira conexao apos o pause falha com erro
+                    // transitorio 40613 ("nao esta disponivel, tente novamente") enquanto o banco acorda.
+                    // Sem isso, essa falha subia como 500 pro cliente em vez de so esperar e tentar de novo.
+                    .EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null)
             ));
 
         // Unit of Work

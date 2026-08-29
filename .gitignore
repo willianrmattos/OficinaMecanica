@@ -85,3 +85,5 @@ k8s/**/secret.yaml
 k8s/**/secret.yaml.bak
 
 apoio/
+
+relatorio-auditoria-seguranca.pdf
