@@ -320,43 +320,76 @@ ser confundidos:
   listar/observar Pods, Nodes e Services do cluster pra coletar
   CPU/memória. Nenhum desses recursos precisa ser criado manualmente.
 
+## Ambiente de Homologação
+
+A branch `main` (produção) e a branch `release` (homologação) disparam
+deploy automático **pro mesmo Deployment** no AKS (mesmo pod, mesmo
+namespace, mesmo banco de dados) — não há um ambiente de homologação
+fisicamente isolado (sem namespace separado, sem réplica dedicada).
+
+Essa é uma limitação real de recurso, não uma escolha de melhor prática: o
+cluster roda num node único, sem CPU sobrando pra manter uma segunda
+instância da aplicação (nem reduzindo réplicas — já rodam só 2 hoje, ver
+[Kubernetes](#kubernetes)). Num cenário real de produção, o recomendável
+seria infraestrutura dedicada por ambiente (namespace/node pool próprios,
+banco de dados separado), pra eliminar qualquer risco de um deploy de
+teste afetar produção de verdade. Como este é um projeto de estudo rodando
+numa assinatura Azure com cota gratuita/limitada (Azure for Students), a
+separação demonstrada aqui é só a nível de **processo**: branch protegida,
+PR obrigatório pra merge, deploy automático disparado por cada branch —
+não isolamento de infraestrutura.
+
 ## CI/CD
 
 O fluxo de deploy e automatizado via GitHub Actions
 ([.github/workflows/ci.yml](.github/workflows/ci.yml)), em 3 jobs sequenciais.
-Roda automaticamente em todo push/PR pra `main`, ou sob demanda a qualquer
-momento pelo botao **Run workflow** na aba *Actions* do GitHub
-(`workflow_dispatch`) — util, por exemplo, pra re-testar o deploy depois de
-um `terraform apply` que nao mexeu em codigo da aplicacao:
+Roda automaticamente em todo push/PR pras branches `main` (producao) e
+`release` (homologacao - ver [Ambiente de Homologacao](#ambiente-de-homologacao)),
+ou sob demanda a qualquer momento pelo botao **Run workflow** na aba
+*Actions* do GitHub (`workflow_dispatch`) — util, por exemplo, pra
+re-testar o deploy depois de um `terraform apply` que nao mexeu em codigo
+da aplicacao:
 
 ```
-push/PR na main OU disparo manual (Run workflow)
+push/PR na main OU release OU disparo manual (Run workflow)
   -> 1. build-and-test        (restore + build Release + testes Domain/Application/Integration)
        |
-       | (so segue daqui em push direto na main ou disparo manual, nao em PR)
+       | (so segue daqui em push direto na main/release ou disparo manual, nao em PR)
        v
      2. build-and-push-image  (login no Azure via OIDC, build da imagem, push pro ACR
-       |                       com as tags <sha-do-commit> e latest)
+       |                       com a tag <sha-do-commit> sempre, + "latest" so quando for main)
        v
-     3. deploy-to-aks         (kubectl apply nos manifests + kubectl set image
-                                pro <sha-do-commit> + kubectl rollout status)
+     3. deploy-to-aks         (aplica migrations pendentes via dotnet ef, kubectl apply
+                                nos manifests + kubectl set image pro <sha-do-commit> +
+                                kubectl rollout status)
 ```
 
 | Job | Quando roda | O que faz |
 |-----|-------------|-----------|
 | `build-and-test` | Todo push, PR ou disparo manual | Restore, build, os 3 projetos de teste, publica resultados como Job Summary (`dorny/test-reporter`) e artifact |
-| `build-and-push-image` | So em push direto na `main` ou disparo manual (nao em PR) | Autentica no Azure (OIDC), publica a imagem no `acrfiap.azurecr.io` com a tag do commit (`github.sha`) e `latest` |
-| `deploy-to-aks` | Idem, apos o job anterior | Aplica os manifests de `k8s/` e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
+| `build-and-push-image` | So em push direto na `main`/`release` ou disparo manual (nao em PR) | Autentica no Azure (OIDC), publica a imagem no `acrfiap.azurecr.io` com a tag do commit (`github.sha`) sempre, e `latest` só quando o push foi na `main` (evita que um push em `release` sobrescreva o `latest` que reflete produção) |
+| `deploy-to-aks` | Idem, apos o job anterior | Aplica as migrations pendentes do banco (`dotnet ef database update`, buscando a connection string no Key Vault via a mesma sessão OIDC), aplica os manifests de `k8s/` e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
+
+**Migração de banco no CI, não mais no startup da API**: antes disso rodava
+automaticamente sempre que a API iniciava em ambiente `Development`
+(`Program.cs`) — um bug fazia isso rodar também "em produção" porque
+`ASPNETCORE_ENVIRONMENT` estava fixo em `"Development"` no
+`k8s/oficinamecanica-api/deployment.yaml` mesmo no AKS. Corrigido pro valor
+certo (`"Production"`), a migração automática no startup parou de rodar
+no cluster (continua funcionando normalmente em `Development` local via
+Docker Compose) — o job `deploy-to-aks` agora aplica as migrations
+pendentes explicitamente, antes de atualizar a imagem.
 
 **Autenticacao sem secrets de longa duracao**: os jobs 2 e 3 autenticam no
 Azure via **OIDC** (`OficinaMecanica.Infra/github_oidc/`) — o GitHub emite um token de
 identidade de curta duracao a cada execucao do workflow, e o Azure confia
-nele atraves de uma Federated Identity Credential restrita a
-`repo:<owner>/<repo>:ref:refs/heads/main`. Nao ha nenhum secret de Service
-Principal armazenado no repositorio; as 3 `variables` do repositorio
-(`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`, `AZURE_SUBSCRIPTION_ID`, valores nao
-sensiveis — vem dos outputs do Terraform) so identificam pra qual App
-Registration o token deve ser trocado.
+nele atraves de Federated Identity Credentials restritas a
+`repo:<owner>/<repo>:ref:refs/heads/main` e `ref:refs/heads/release`. Nao
+ha nenhum secret de Service Principal armazenado no repositorio; as 3
+`variables` do repositorio (`AZURE_CLIENT_ID`, `AZURE_TENANT_ID`,
+`AZURE_SUBSCRIPTION_ID`, valores nao sensiveis — vem dos outputs do
+Terraform) so identificam pra qual App Registration o token deve ser
+trocado.
 
 **API server do AKS sem restricao de IP**: nao criei nenhum mecanismo de
 `authorized_ip_ranges` pro cluster — o runner do GitHub Actions e hospedado
