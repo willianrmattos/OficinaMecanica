@@ -39,8 +39,13 @@ spec:
           ports:
             - containerPort: 8080
           env:
+            # Corrigido de "Development" (bug antigo - fazia o Program.cs
+            # rodar auto-migration a cada start so por causa desse valor
+            # errado, ver CLAUDE.md "Banco de Dados"). A migracao agora
+            # roda como step explicito no CI (ci.yml, dotnet ef database
+            # update), nao mais implicita via IsDevelopment().
             - name: ASPNETCORE_ENVIRONMENT
-              value: "Development"
+              value: "Production"
             - name: DOTNET_SYSTEM_GLOBALIZATION_INVARIANT
               value: "false"
             - name: JwtSettings__Issuer
