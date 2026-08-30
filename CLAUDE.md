@@ -169,13 +169,54 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
 
 ## Observabilidade
 
-- Serilog com sink para Console
+**AKS/producao: New Relic, via OpenTelemetry (sem agente proprietario)**
+
+- Decisao deliberada de nao instalar o agente .NET proprietario da New
+  Relic: a API so tem o SDK OpenTelemetry (padrao aberto, ja usado antes só
+  pra tracing) exportando via OTLP pra um **OpenTelemetry Collector**
+  rodando no cluster (`OficinaMecanica.Infra/helm/otel-collector.tf`), que
+  por sua vez reexporta pra New Relic. Trocar de backend de observabilidade
+  no futuro so exige mudar a config do Collector, nao o codigo da API nem
+  reinstalar agente nenhum.
+- `Program.cs`: bloco condicional (só ativa se `Otel:Endpoint` estiver
+  configurado, mesmo padrao resiliente do `Smtp:Host`) monta
+  `AddOpenTelemetry()` com `.WithTracing()` (ASP.NET Core + SqlClient) e
+  `.WithMetrics()` (ASP.NET Core + `OpenTelemetry.Instrumentation.Runtime`,
+  cobre CPU/GC/heap do processo), ambos exportando via `AddOtlpExporter`.
+  Serilog ganhou um `WriteTo.OpenTelemetry(...)` adicional (pacote
+  `Serilog.Sinks.OpenTelemetry`, ao lado do `WriteTo.Console()` que
+  continua existindo pro `kubectl logs`) — popula `trace_id`/`span_id`
+  automaticamente a partir do `Activity.Current`, sem enricher adicional
+  (comportamento padrao do sink), garantindo a correlacao entre logs e
+  traces de uma mesma requisicao.
+- Metricas de negocio via `System.Diagnostics.Metrics`
+  (`OficinaMecanica.Application.Observabilidade.MetricasNegocio` — `Meter`
+  registrado no `Program.cs` via `AddMeter(MetricasNegocio.MeterName)`):
+  `Counter<long>` pra OS criada, orcamento recusado e falha de e-mail
+  (emitidos nos respectivos `EventHandler`s/`SmtpEmailService`), e um
+  `Histogram<double>` de tempo medio de execucao por status
+  (`tempo_execucao_horas`, com uma tag `status` — uma metrica so, varias
+  dimensoes via NRQL `FACET`, em vez de uma metrica por status), recalculado
+  periodicamente por `MetricasDeNegocioBackgroundService`
+  (`IOrdemDeServicoRepository.ObterTempoMedioPorStatusAsync`).
+- **Gotcha confirmado na pratica**: `Counter<T>` (os 3 acima) apareciam
+  sempre zerados na New Relic (`sum()`/valor bruto = 0, mesmo com
+  incrementos reais acontecendo) - causa raiz e a temporalidade
+  **cumulativa** default do exporter OTLP do .NET, que a New Relic nao
+  converte pra delta de forma confiavel em metricas customizadas (so nas
+  nativas do agente proprietario, que nao usamos). Corrigido via env var
+  `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`
+  (`k8s/oficinamecanica-api/deployment.yaml`) - o `Histogram<double>` acima
+  nao precisa disso, funciona corretamente com o default.
 - `GET /health`: health check simples (`AddHealthChecks()`/`MapHealthChecks`, sem verificacao de dependencias como banco) — so confirma que o processo esta de pe. Sem autenticacao.
-- `GET /metrics`: metricas no formato Prometheus (`prometheus-net.AspNetCore`, `UseHttpMetrics()`/`MapMetrics()`) — contagem/duracao de requests HTTP por padrao. Sem autenticacao.
-- Scrape configurado via `ServiceMonitor` em `k8s/monitoring/servicemonitor.yaml`, apontando pro Prometheus instalado em `OficinaMecanica.Infra/helm/monitoring.tf` (kube-prometheus-stack)
-- Logs agregados via Loki + Grafana Alloy (`OficinaMecanica.Infra/helm/loki.tf`) — ver secao "Infraestrutura (Terraform / Azure)" pra detalhes
-- Tracing distribuido via Jaeger (`k8s/jaeger/`, modo all-in-one) — API instrumentada com OpenTelemetry .NET (ASP.NET Core + SqlClient), exportando via OTLP. So ativa se `Otel:Endpoint` estiver configurado (mesmo padrao resiliente do `Smtp:Host`); Grafana ja sai com o Jaeger como fonte de dados adicional. Dev local: servico `jaeger` no `docker-compose.yml` (UI web em `http://localhost:16686`)
-- Dev local: stack completa de observabilidade tambem no `docker-compose.yml` (Prometheus + Loki + Alloy + Grafana, servicos `prometheus`/`loki`/`alloy`/`grafana`), equivalente ao que roda no AKS via `OficinaMecanica.Infra/helm/`. Grafana local ja sai com Prometheus, Loki e Jaeger provisionados como datasources automaticamente (`local/grafana-datasources.yml`) — UI web em `http://localhost:3000` (login `admin` / `GRAFANA_ADMIN_PASSWORD`)
+- `GET /metrics`: metricas no formato Prometheus (`prometheus-net.AspNetCore`, `UseHttpMetrics()`/`MapMetrics()`) — sem nenhum Prometheus no AKS pra fazer scrape disso hoje (ver historico do repositorio), mantido so porque o docker-compose local ainda usa.
+- CPU/memoria de pods/nodes no AKS: integracao de Kubernetes da New Relic (`nri-bundle`, `OficinaMecanica.Infra/helm/newrelic.tf`), independente do Collector acima.
+- Alertas/dashboards: o MCP oficial da New Relic existe mas as ferramentas de criacao de dashboard/alerta sao premium-gated (nao funcionaram mesmo autenticado) - na pratica, o dashboard foi montado como JSON versionado (`E:\FIAP\Pos\dashboard.json`, raiz do workspace, importado manualmente via New Relic UI: Dashboards > Import dashboard) e o alerta foi criado direto via NerdGraph (`curl` + User API Key `NRAK-...`, mutations `alertsPolicyCreate`/`alertsNrqlConditionStaticCreate`) - nao Terraform, nao UI manual pro alerta.
+
+**Dev local (docker-compose): stack self-hosted, sem relacao com o New Relic acima**
+
+- Serilog com sink para Console.
+- Stack completa de observabilidade no `docker-compose.yml` (Prometheus + Loki + Alloy + Grafana + Jaeger, servicos `prometheus`/`loki`/`alloy`/`grafana`/`jaeger`) — continua existindo so pra desenvolvimento local, decisao deliberada de nao remover (o New Relic acima so é usado no ambiente AKS). Grafana local ja sai com Prometheus, Loki e Jaeger provisionados como datasources automaticamente (`local/grafana-datasources.yml`) — UI web em `http://localhost:3000` (login `admin` / `GRAFANA_ADMIN_PASSWORD`)
 - **Cuidado com a app "Traces Drilldown"** do Grafana (menu lateral, instalada automaticamente como plugin): so funciona com datasource Tempo, nao reconhece datasource Jaeger — pra ver traces, usar a aba **Explore** (icone de bussola) normal, selecionando o datasource Jaeger manualmente
 
 ## Docker
@@ -236,10 +277,13 @@ Organizada em subpastas por assunto:
 ```
 k8s/
   oficinamecanica-api/   # manifests da API
-  monitoring/             # "uso" do Prometheus/Grafana (o que monitorar)
   mailpit/                # SMTP de desenvolvimento (captura os e-mails da API dentro do cluster)
-  jaeger/                 # tracing distribuido, modo all-in-one
 ```
+
+`k8s/monitoring/` (ServiceMonitor + dashboard-as-code do Grafana) e
+`k8s/jaeger/` (tracing all-in-one) existiram no passado e foram removidos
+junto com o Prometheus/Grafana/Loki/Alloy/Jaeger do AKS, substituidos pelo
+New Relic via OpenTelemetry Collector (ver secao "Observabilidade").
 
 ### `k8s/oficinamecanica-api/`
 
@@ -251,7 +295,9 @@ k8s/
   CSI Secrets Store driver (ver `secret-provider-class.yaml` abaixo), nao mais
   aplicado a mao. Por isso o Deployment tambem monta um volume `secrets-store`
   (nao lido diretamente pelo container - so existe pra disparar essa
-  sincronizacao). Readiness/liveness probe em `GET /health`.
+  sincronizacao). Readiness/liveness probe em `GET /health`. `Otel__Endpoint`
+  aponta pro OpenTelemetry Collector (`OficinaMecanica.Infra/helm/otel-collector.tf`),
+  nao mais pro Jaeger (ver secao "Observabilidade").
 - **`service.yaml`**: ClusterIP, porta 80 -> 8080 (so alcancavel via Ingress),
   porta nomeada `http` (necessario pro `ServiceMonitor` referenciar por nome).
 - **`ingress.yaml`**: `ingressClassName: nginx`, roteia tudo pro Service. Depende
@@ -268,32 +314,6 @@ k8s/
   mao (ver secao "Banco de Dados"/"Infraestrutura" — o Key Vault ja estava
   provisionado, essa era a pendencia de conectar ele ao Deployment).
 
-### `k8s/monitoring/`
-
-- **`servicemonitor.yaml`**: diz pro Prometheus (instalado via
-  `OficinaMecanica.Infra/helm/monitoring.tf`) pra fazer scrape do `GET /metrics` da API a
-  cada 30s. Tem o label `release: monitoring` (obrigatorio — e o nome do
-  helm release do Prometheus, sem isso o `ServiceMonitor` e ignorado) e
-  `namespaceSelector` apontando pro namespace `default` (onde o Service da
-  API roda).
-- **`ingress.yaml`**: expoe o Grafana e o Prometheus via `ingress-nginx`
-  (duas regras no mesmo Ingress, ja que os dois tem o mesmo "dono" —
-  observabilidade — diferente do Ingress da API, que fica separado em
-  `k8s/oficinamecanica-api/`), usando host baseado em **nip.io**
-  (`grafana.<ip>.nip.io`/`prometheus.<ip>.nip.io` — resolve sozinho pro IP
-  embutido no nome, sem precisar de dominio real). O IP fica hardcoded nos
-  hosts do arquivo (nao e um placeholder) — precisa ser atualizado pro IP
-  atual do `ingress-nginx-controller` (`kubectl get svc -n ingress-nginx
-  ingress-nginx-controller`) sempre que o Service for recriado. Alternativa
-  mais simples pra teste rapido: `kubectl port-forward`.
-- **`dashboard-oficinamecanica-api.yaml`**: `ConfigMap` com o label
-  `grafana_dashboard: "1"` e o JSON do dashboard embutido em `data` — o
-  sidecar do Grafana (`OficinaMecanica.Infra/helm/monitoring.yaml.tpl`) detecta sozinho e
-  importa, sem precisar clicar em nada na UI. Paineis usam as metricas reais
-  do `prometheus-net` (`http_requests_received_total`,
-  `http_request_duration_seconds`, `http_requests_in_progress`) mais
-  CPU/memoria/replicas via `kube-state-metrics`/cAdvisor.
-
 O Deployment le seus segredos do Key Vault (`OficinaMecanica.Infra/keyvault/`) via CSI Secrets
 Store driver — ver `secret-provider-class.yaml` acima e
 `OficinaMecanica.Infra/keyvault_secrets.tf` (ver secao "Infraestrutura (Terraform / Azure)").
@@ -308,25 +328,8 @@ Store driver — ver `secret-provider-class.yaml` acima e
 - **`service.yaml`**: ClusterIP, expoe as portas 1025 (SMTP, consumida pelo
   `oficinamecanica-api` via `Smtp__Host: mailpit`) e 8025 (UI web).
 - **`ingress.yaml`**: expoe so a porta 8025 (UI web) via `ingress-nginx`,
-  host nip.io (`mailpit.<ip>.nip.io`), mesmo padrao de
-  `k8s/monitoring/ingress.yaml` — a porta 1025 (SMTP) fica so acessivel de
-  dentro do cluster, sem sentido expor SMTP num Ingress HTTP.
-
-### `k8s/jaeger/`
-
-- **`deployment.yaml`**: `jaeger` (imagem `jaegertracing/all-in-one`), 1
-  replica, sem persistencia (traces em memoria, aceitavel pro volume baixo
-  de um projeto de estudo) — namespace `monitoring` (agrupado com o resto
-  da observabilidade, diferente do Mailpit, que fica junto da API). Optei
-  por manifest puro (nao um `helm_release` em `OficinaMecanica.Infra/helm/`) porque o modo
-  all-in-one e um unico container sem configuracao complexa — o chart
-  oficial do Jaeger e pensado pra instalacoes maiores (Cassandra/
-  Elasticsearch, operator), desproporcional pro que precisamos aqui.
-- **`service.yaml`**: ClusterIP, expoe as portas 4317/4318 (OTLP gRPC/HTTP,
-  usadas pela API pra enviar spans) e 16686 (Jaeger Query UI).
-- **`ingress.yaml`**: expoe so a porta 16686 (UI) via `ingress-nginx`, host
-  nip.io (`jaeger.<ip>.nip.io`) — as portas OTLP ficam so acessiveis de
-  dentro do cluster.
+  host nip.io (`mailpit.<ip>.nip.io`) — a porta 1025 (SMTP) fica so
+  acessivel de dentro do cluster, sem sentido expor SMTP num Ingress HTTP.
 
 ## CI/CD
 
@@ -348,7 +351,7 @@ mexeu em codigo da aplicacao).
 3. **`deploy-to-aks`**: idem (push ou `workflow_dispatch` na `main`). Autentica via
    `azure/aks-set-context@v4` (`admin: true`, usa contas locais do cluster,
    nao Azure RBAC de autorizacao dentro do Kubernetes), aplica
-   `k8s/oficinamecanica-api/`, `k8s/monitoring/`, `k8s/mailpit/` e `k8s/jaeger/`, e usa
+   `k8s/oficinamecanica-api/` e `k8s/mailpit/`, e usa
    `kubectl set image` apontando pro hash do commit (nao o `:latest` fixo
    do YAML) + `kubectl rollout status` pra confirmar.
 

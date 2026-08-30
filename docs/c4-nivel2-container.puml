@@ -9,18 +9,16 @@ title OficinaMecanica - Nivel 2: Container
 Person(admin, "Administrador", "Usuario autenticado com JWT")
 Person_Ext(cliente, "Cliente Final", "Acesso anonimo a endpoints publicos")
 System_Ext(smtp, "Servidor SMTP", "Mailpit (dev) - notificacoes de status por e-mail")
+System_Ext(newrelic, "New Relic", "SaaS - APM, infraestrutura, dashboards e alertas")
 
-Container(apim, "Azure API Management", "Consumption tier", "Gateway na frente de todos os backends. Modelo wildcard/passthrough por API - path /oficinaserver pra API (via ingress-nginx), /grafana pro Grafana (via ingress-nginx), /segurancaserver pro Seguranca (Azure Function, backend publico direto). Sem exigir subscription key (cada backend ja tem seu proprio controle de acesso).")
+Container(apim, "Azure API Management", "Consumption tier", "Gateway na frente de todos os backends. Modelo wildcard/passthrough por API - path /oficinaserver pra API (via ingress-nginx), /segurancaserver pro Seguranca (Azure Function, backend publico direto). Sem exigir subscription key (cada backend ja tem seu proprio controle de acesso).")
 
 System_Boundary(oficina, "OficinaMecanica (AKS)") {
-    Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. So VALIDA tokens JWT (RS256/JWKS, emitidos pelo OficinaMecanica.Seguranca) - nao emite mais nenhum. Valida entradas com FluentValidation. Emite metricas (prometheus-net), logs (Serilog) e traces (OpenTelemetry). Escalada de 2 a 5 replicas via HPA.")
+    Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. So VALIDA tokens JWT (RS256/JWKS, emitidos pelo OficinaMecanica.Seguranca) - nao emite mais nenhum. Valida entradas com FluentValidation. Emite traces, metricas (incluindo metricas de negocio customizadas) e logs correlacionados via OpenTelemetry. Escalada de 2 a 5 replicas via HPA.")
     ContainerDb(db, "OficinaMecanicaDb", "Azure SQL Database", "Persiste clientes, veiculos, servicos, pecas, ordens de servico e historico de status. Concorrencia otimista com ConcurrencyToken. Tier serverless sempre-gratis.")
 
-    Container(prometheus, "Prometheus", "kube-prometheus-stack", "Coleta e armazena metricas via scrape periodico do endpoint /metrics.")
-    Container(grafana, "Grafana", "kube-prometheus-stack", "Dashboards e consulta unificada de metricas, logs e traces.")
-    Container(loki, "Loki", "Modo Monolithic", "Armazena e indexa os logs agregados dos pods.")
-    Container(alloy, "Grafana Alloy", "DaemonSet", "Le o log de cada container do node e envia pro Loki.")
-    Container(jaeger, "Jaeger", "All-in-one", "Recebe e armazena os traces distribuidos exportados pela API via OTLP.")
+    Container(otelCollector, "OpenTelemetry Collector", "Deployment", "Recebe traces/metricas/logs via OTLP da API e reexporta pra New Relic. Trocar de backend de observabilidade so exige mudar essa config, nao o codigo da API.")
+    Container(nriBundle, "nri-bundle", "New Relic Infrastructure", "Coleta CPU/memoria de pods e nodes do cluster e envia pra New Relic.")
 }
 
 System_Boundary(seguranca_sys, "OficinaMecanica.Seguranca (repositorio separado)") {
@@ -30,22 +28,17 @@ System_Boundary(seguranca_sys, "OficinaMecanica.Seguranca (repositorio separado)
 
 Rel(admin, apim, "Autentica (login)", "HTTPS / REST")
 Rel(admin, apim, "Chama endpoints administrativos", "HTTPS / REST / JWT Bearer")
-Rel(admin, apim, "Visualiza dashboards, logs e traces", "HTTPS")
+Rel(admin, newrelic, "Visualiza dashboards, logs, traces e alertas", "HTTPS")
 Rel(cliente, apim, "Consulta OS e aprova ou recusa orcamento", "HTTPS / REST (anonimo)")
 Rel(apim, api, "Roteia /oficinaserver via ingress-nginx (backend publico, wildcard passthrough)", "HTTP")
-Rel(apim, grafana, "Roteia /grafana via ingress-nginx (backend publico, wildcard passthrough)", "HTTP")
 Rel(apim, seguranca, "Roteia /segurancaserver (backend publico direto, sem AKS/ingress-nginx no meio)", "HTTPS")
 Rel(api, db, "Le e escreve via EF Core", "TCP 1433 / TDS")
 Rel(seguranca, segurancaDb, "Le e escreve via EF Core", "TCP 1433 / TDS")
 Rel(api, smtp, "Envia notificacao a cada mudanca de status", "SMTP (MailKit)")
 Rel(smtp, cliente, "Entrega notificacao", "E-mail")
 
-Rel(prometheus, api, "Coleta metricas via scrape", "HTTP /metrics")
-Rel(alloy, api, "Le os logs do container", "arquivo de log do node")
-Rel(alloy, loki, "Envia logs coletados", "HTTP")
-Rel(api, jaeger, "Exporta spans de tracing", "OTLP / gRPC")
-Rel(grafana, prometheus, "Consulta metricas", "PromQL")
-Rel(grafana, loki, "Consulta logs", "LogQL")
-Rel(grafana, jaeger, "Consulta traces", "HTTP")
+Rel(api, otelCollector, "Exporta traces, metricas e logs", "OTLP / gRPC")
+Rel(otelCollector, newrelic, "Reexporta traces, metricas e logs", "OTLP / HTTPS")
+Rel(nriBundle, newrelic, "Envia metricas de CPU/memoria do cluster", "HTTPS")
 
 @enduml

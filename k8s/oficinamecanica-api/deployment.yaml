@@ -55,8 +55,20 @@ spec:
               value: "1025"
             - name: Smtp__Remetente
               value: "no-reply@oficinamecanica.local"
+            # Counters (Add()) exportados com temporalidade cumulativa (default do SDK)
+            # aparecem sempre zerados na New Relic - o backend deles nao faz a conversao
+            # cumulativo->delta de forma confiavel pra metricas customizadas (so pras
+            # nativas do agente proprietario). Delta e o que a New Relic recomenda pra
+            # esse tipo de metrica - Histogram (tempo_execucao_horas) nao precisa disso,
+            # ja funciona corretamente com o default.
+            - name: OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE
+              value: "delta"
+            # Aponta pro OpenTelemetry Collector (OficinaMecanica.Infra/helm/otel-collector.tf),
+            # o Collector reexporta pra New Relic via
+            # OTLP. Trocar de backend de observabilidade no futuro so exige mudar a
+            # config do Collector, nao esse endpoint nem o codigo da API.
             - name: Otel__Endpoint
-              value: "http://jaeger.monitoring.svc.cluster.local:4317"
+              value: "http://otel-collector-opentelemetry-collector.monitoring.svc.cluster.local:4317"
             - name: ConnectionStrings__DefaultConnection
               valueFrom:
                 secretKeyRef:

@@ -2,6 +2,7 @@ using MailKit.Net.Smtp;
 using MailKit.Security;
 using MimeKit;
 using OficinaMecanica.Application.Interfaces;
+using OficinaMecanica.Application.Observabilidade;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
@@ -55,6 +56,7 @@ public class SmtpEmailService : IEmailService
         catch (Exception ex)
         {
             _logger.LogWarning(ex, "Falha ao enviar e-mail para {Destinatario} via SMTP {Host}.", destinatario, host);
+            MetricasNegocio.EmailsFalha.Add(1, new KeyValuePair<string, object?>("host", host ?? "desconhecido"));
         }
     }
 }

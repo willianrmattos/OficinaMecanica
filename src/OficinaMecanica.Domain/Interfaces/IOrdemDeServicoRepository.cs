@@ -11,6 +11,7 @@ public interface IOrdemDeServicoRepository
     Task<int> ContarAsync(StatusOrdemDeServico? filtroStatus = null, CancellationToken cancellationToken = default);
     Task<IEnumerable<OrdemDeServico>> ListarPorClienteAsync(Guid clienteId, CancellationToken cancellationToken = default);
     Task<double> ObterTempoMedioExecucaoAsync(CancellationToken cancellationToken = default);
+    Task<IReadOnlyDictionary<StatusOrdemDeServico, double>> ObterTempoMedioPorStatusAsync(CancellationToken cancellationToken = default);
     Task AdicionarAsync(OrdemDeServico ordem, CancellationToken cancellationToken = default);
     void Atualizar(OrdemDeServico ordem);
 }

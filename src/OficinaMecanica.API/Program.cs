@@ -1,23 +1,46 @@
 using OficinaMecanica.Application;
+using OficinaMecanica.Application.Observabilidade;
+using OficinaMecanica.API.BackgroundServices;
 using OficinaMecanica.Infrastructure;
 using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.API.Middleware;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
+using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
 using Prometheus;
 using Serilog;
+using Serilog.Sinks.OpenTelemetry;
 
 var builder = WebApplication.CreateBuilder(args);
 
+var otelEndpoint = builder.Configuration["Otel:Endpoint"];
+
 // Serilog
-Log.Logger = new LoggerConfiguration()
+var loggerConfig = new LoggerConfiguration()
     .ReadFrom.Configuration(builder.Configuration)
     .Enrich.FromLogContext()
-    .WriteTo.Console()
-    .CreateLogger();
+    .WriteTo.Console();
+
+// trace_id/span_id sao populados automaticamente pelo sink a partir do
+// Activity.Current - sem enricher adicional (comportamento padrao do
+// Serilog.Sinks.OpenTelemetry).
+if (!string.IsNullOrWhiteSpace(otelEndpoint))
+{
+    loggerConfig = loggerConfig.WriteTo.OpenTelemetry(options =>
+    {
+        options.Endpoint = otelEndpoint;
+        options.Protocol = OtlpProtocol.Grpc;
+        options.ResourceAttributes = new Dictionary<string, object>
+        {
+            ["service.name"] = "OficinaMecanica.API"
+        };
+    });
+}
+
+Log.Logger = loggerConfig.CreateLogger();
 
 builder.Host.UseSerilog();
 
@@ -25,7 +48,6 @@ builder.Host.UseSerilog();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 
-var otelEndpoint = builder.Configuration["Otel:Endpoint"];
 if (!string.IsNullOrWhiteSpace(otelEndpoint))
 {
     builder.Services.AddOpenTelemetry()
@@ -33,7 +55,14 @@ if (!string.IsNullOrWhiteSpace(otelEndpoint))
         .WithTracing(tracing => tracing
             .AddAspNetCoreInstrumentation()
             .AddSqlClientInstrumentation()
+            .AddOtlpExporter(otlp => otlp.Endpoint = new Uri(otelEndpoint)))
+        .WithMetrics(metrics => metrics
+            .AddAspNetCoreInstrumentation()
+            .AddRuntimeInstrumentation()
+            .AddMeter(MetricasNegocio.MeterName)
             .AddOtlpExporter(otlp => otlp.Endpoint = new Uri(otelEndpoint)));
+
+    builder.Services.AddHostedService<MetricasDeNegocioBackgroundService>();
 }
 
 builder.Services.AddControllers();

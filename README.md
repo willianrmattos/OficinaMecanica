@@ -7,7 +7,7 @@ Sistema backend para gestao de oficina mecanica, desenvolvido em .NET 8 com DDD,
 Esta fase evolui a aplicacao de um container isolado (`docker compose`) para uma implantacao cloud-native completa no Azure, com tres frentes:
 
 1. **Infraestrutura como codigo** (Terraform): todo recurso Azure — cluster Kubernetes, banco de dados, registro de imagens, cofre de segredos, autenticacao do pipeline — e provisionado e versionado como codigo, sem cliques manuais no portal (ver [Infraestrutura](#infraestrutura)).
-2. **Orquestracao em Kubernetes** (AKS): a API roda em pods gerenciados, com autoscaling por CPU/memoria (HPA), segredos sincronizados do Key Vault (sem arquivo de credenciais versionado) e observabilidade via Prometheus/Grafana (ver [Kubernetes](#kubernetes)).
+2. **Orquestracao em Kubernetes** (AKS): a API roda em pods gerenciados, com autoscaling por CPU/memoria (HPA), segredos sincronizados do Key Vault (sem arquivo de credenciais versionado) e observabilidade via New Relic, com traces/metricas/logs saindo por OpenTelemetry (ver [Kubernetes](#kubernetes)).
 3. **Entrega continua** (GitHub Actions): todo push na `main` roda build + testes automaticamente e, se tudo passar, publica a imagem no registry e atualiza o Deployment no cluster sem intervencao manual (ver [CI/CD](#cicd)).
 
 ## Diagramas e Relatorios
@@ -215,9 +215,9 @@ backend de state remoto.
 
 Ver o README/CLAUDE.md do `OficinaMecanica.Infra` pra: tabela de modulos,
 como rodar `terraform init/plan/apply`, detalhes do API Gateway (Azure API
-Management na frente do `ingress-nginx`), observabilidade via
-kube-prometheus-stack + Loki/Alloy, e notas operacionais sobre a assinatura
-Azure for Students.
+Management na frente do `ingress-nginx`), o OpenTelemetry Collector +
+integracao de Kubernetes da New Relic, e notas operacionais sobre a
+assinatura Azure for Students.
 
 ## Kubernetes
 
@@ -238,14 +238,8 @@ az aks get-credentials --resource-group rgfiap --name aksfiap
 # Aplica os manifests da API (Deployment, Service, Ingress, HPA, SecretProviderClass)
 kubectl apply -f k8s/oficinamecanica-api/
 
-# Aplica os manifests de observabilidade (ServiceMonitor, dashboards, Ingress do Grafana/Prometheus)
-kubectl apply -f k8s/monitoring/
-
 # Aplica o Mailpit (SMTP de desenvolvimento, dentro do proprio cluster)
 kubectl apply -f k8s/mailpit/
-
-# Aplica o Jaeger (tracing distribuido, dentro do proprio cluster)
-kubectl apply -f k8s/jaeger/
 
 # Acompanha o rollout e confirma que os pods subiram
 kubectl rollout status deployment/oficinamecanica-api
@@ -273,37 +267,6 @@ Deployment monta o `SecretProviderClass` como volume:
 kubectl apply -f k8s/oficinamecanica-api/
 ```
 
-### `k8s/monitoring/`
-
-| Arquivo | Recurso | Finalidade |
-|---------|---------|------------|
-| `servicemonitor.yaml` | ServiceMonitor | Configura o Prometheus (instalado via Terraform) pra coletar as metricas da API em `GET /metrics` |
-| `ingress.yaml` | Ingress | Expõe o Grafana e o Prometheus externamente via ingress-nginx (duas regras, um host cada) |
-| `dashboard-oficinamecanica-api.yaml` | ConfigMap | Dashboard do Grafana como código — importado automaticamente pelo sidecar |
-
-O Ingress usa host baseado em [nip.io](https://nip.io)
-(resolve `qualquer-coisa.<ip>.nip.io` para o próprio IP embutido no nome, sem
-precisar de domínio próprio) — antes de aplicar, substitua `<IP-DO-INGRESS>`
-pelo IP público do ingress-nginx:
-
-```bash
-kubectl get svc -n ingress-nginx ingress-nginx-controller   # copiar o EXTERNAL-IP
-kubectl apply -f k8s/monitoring/
-```
-
-**Acessando o Grafana**: o chart gera uma senha aleatoria pro usuario
-`admin` a cada instalacao (nao fica hardcoded em lugar nenhum, nem no
-`.tf`/state) — pra recuperar o valor atual:
-
-```bash
-kubectl get secret monitoring-grafana -n monitoring -o jsonpath="{.data.admin-password}" | base64 -d
-```
-
-Login em `http://grafana.<IP-DO-INGRESS>.nip.io` (ou via `kubectl port-forward
--n monitoring svc/monitoring-grafana 3000:80`, depois `http://localhost:3000`),
-usuario `admin` + a senha do comando acima. Tambem acessivel via
-`https://<apim>.azure-api.net/grafana/` (ver [OficinaMecanica.Infra](../OficinaMecanica.Infra), onde o API Gateway esta documentado).
-
 ### `k8s/mailpit/`
 
 | Arquivo | Recurso | Finalidade |
@@ -323,20 +286,19 @@ do cluster).
 kubectl apply -f k8s/mailpit/
 ```
 
-### `k8s/jaeger/`
+### Observabilidade (New Relic)
 
-| Arquivo | Recurso | Finalidade |
-|---------|---------|------------|
-| `deployment.yaml` | Deployment | Jaeger em modo all-in-one (`jaegertracing/all-in-one`), 1 réplica, traces em memória (sem persistência) |
-| `service.yaml` | Service (ClusterIP) | Portas 4317/4318 (OTLP, usadas pela API) e 16686 (Query UI) |
-| `ingress.yaml` | Ingress | Expõe só a UI (porta 16686) via ingress-nginx, host nip.io |
-
-Recebe os spans que a API exporta via OpenTelemetry (OTLP). Fica no
-namespace `monitoring`
-
-```bash
-kubectl apply -f k8s/jaeger/
-```
+O `k8s/monitoring/` e o `k8s/jaeger/` que existiam aqui (ServiceMonitor,
+dashboard-as-code do Grafana, Jaeger all-in-one) foram removidos junto com
+o Prometheus/Grafana/Loki/Alloy/Jaeger do AKS. No lugar, a API exporta
+traces/metricas/logs via OpenTelemetry (`Otel__Endpoint` no
+`k8s/oficinamecanica-api/deployment.yaml`) pro **OpenTelemetry Collector**
+(`OficinaMecanica.Infra/helm/otel-collector.tf`), que reexporta pra New
+Relic; CPU/memoria de pods/nodes vem da integracao de Kubernetes da New
+Relic (`nri-bundle`, `OficinaMecanica.Infra/helm/newrelic.tf`). Ver
+CLAUDE.md, seção "Observabilidade", pra detalhes de instrumentação
+(métricas de negócio, correlação log↔trace) e o README/CLAUDE.md do
+`OficinaMecanica.Infra` pra detalhes do Collector/nri-bundle.
 
 ### Permissões: RBAC do Azure vs. RBAC do Kubernetes
 
@@ -352,13 +314,11 @@ ser confundidos:
   explicitamente via Terraform.
 - **RBAC do Kubernetes** (`ClusterRole`/`ClusterRoleBinding`, nativos do
   cluster): controlam o que cada `ServiceAccount` pode fazer **dentro da
-  API do Kubernetes**. O Prometheus e o Grafana instalados via
-  `OficinaMecanica.Infra/helm/monitoring.tf` já vêm com suas próprias permissões desse
-  tipo, criadas automaticamente pelo chart `kube-prometheus-stack` — o
-  Prometheus precisa listar/observar Pods e Services do cluster pra
-  descobrir alvos de coleta, e o Grafana precisa observar `ConfigMap`s
-  pra importar dashboards/datasources. Nenhum desses recursos precisa ser
-  criado manualmente.
+  API do Kubernetes**. O `nri-bundle` (integração de Kubernetes da New
+  Relic, `OficinaMecanica.Infra/helm/newrelic.tf`) já vem com suas próprias
+  permissões desse tipo, criadas automaticamente pelo chart — precisa
+  listar/observar Pods, Nodes e Services do cluster pra coletar
+  CPU/memória. Nenhum desses recursos precisa ser criado manualmente.
 
 ## CI/CD
 
@@ -440,7 +400,7 @@ As tabelas abaixo resumem as mesmas rotas, agrupadas por area, para referencia r
 | Metodo | Rota | Autenticado | Descricao |
 |--------|------|:-----------:|-----------|
 | GET | /health | Nao | Health check simples (confirma que o processo esta de pe) |
-| GET | /metrics | Nao | Metricas no formato Prometheus (scraped via `k8s/monitoring/servicemonitor.yaml`) |
+| GET | /metrics | Nao | Metricas no formato Prometheus (`prometheus-net`) - sem scrape no AKS hoje, mantido so pro Prometheus local do docker-compose |
 
 ### Autenticacao
 
@@ -603,7 +563,7 @@ Os eventos sao publicados pelo `AppDbContext.SaveChangesAsync` via `IMediator.Pu
 | Testes | xUnit + FluentAssertions + Moq + Bogus | 2.4.2 / 6.12.0 / 4.20.70 / 35.6.1 |
 | Infra (app) | Docker + Docker Compose | — |
 | Infra (cloud) | Terraform (Azure: AKS, ACR, Key Vault, Azure SQL Database) | — |
-| Orquestracao | Kubernetes (AKS) + Helm (ingress-nginx, kube-prometheus-stack, Loki, Alloy) | — |
-| Observabilidade (cluster) | Prometheus + Grafana (metricas) + Loki + Grafana Alloy (logs) + Jaeger (tracing, OpenTelemetry .NET) | — |
+| Orquestracao | Kubernetes (AKS) + Helm (ingress-nginx, OpenTelemetry Collector, nri-bundle) | — |
+| Observabilidade (cluster) | New Relic (traces + metricas + logs via OpenTelemetry .NET, CPU/memoria via nri-bundle) | — |
 | Qualidade | SonarQube 10 Community | — |
 | Seguranca | Trivy (Aqua Security) | latest |

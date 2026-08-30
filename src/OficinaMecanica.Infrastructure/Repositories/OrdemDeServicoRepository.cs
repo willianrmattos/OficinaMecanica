@@ -96,6 +96,30 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
             .Average(o => (o.DataConclusao!.Value - o.DataAbertura).TotalHours);
     }
 
+    public async Task<IReadOnlyDictionary<StatusOrdemDeServico, double>> ObterTempoMedioPorStatusAsync(CancellationToken cancellationToken = default)
+    {
+        var historico = await _context.HistoricoStatus
+            .Select(h => new { h.OrdemDeServicoId, h.Status, h.DataAlteracao })
+            .ToListAsync(cancellationToken);
+
+        // Duracao de cada status = intervalo ate a proxima mudanca de status da mesma OS
+        // (o ultimo status de cada OS fica sem par - ainda nao "saiu" desse status).
+        return historico
+            .GroupBy(h => h.OrdemDeServicoId)
+            .SelectMany(porOrdem =>
+            {
+                var ordenado = porOrdem.OrderBy(h => h.DataAlteracao).ToList();
+                return ordenado
+                    .Zip(ordenado.Skip(1), (atual, proximo) => new
+                    {
+                        atual.Status,
+                        Duracao = (proximo.DataAlteracao - atual.DataAlteracao).TotalHours
+                    });
+            })
+            .GroupBy(d => d.Status)
+            .ToDictionary(g => g.Key, g => g.Average(d => d.Duracao));
+    }
+
     public async Task AdicionarAsync(OrdemDeServico ordem, CancellationToken cancellationToken = default)
     {
         await _context.OrdensDeServico.AddAsync(ordem, cancellationToken);
