@@ -4,9 +4,9 @@
 # Deixei sem "host" na regra abaixo de proposito: e uma regra catch-all, que
 # aceita qualquer hostname (ou nenhum) nao reivindicado por outra regra mais
 # especifica - por isso o IP publico do ingress-nginx roteia direto para a
-# API, sem necessidade de dominio. Ja em Grafana/Prometheus
-# (k8s/monitoring/ingress.yaml) usei host especifico porque os dois
-# compartilham o mesmo IP e precisam ser diferenciados.
+# API, sem necessidade de dominio. Ja no Mailpit (k8s/mailpit/ingress.yaml)
+# usei host especifico (nip.io) porque os dois compartilham o mesmo IP e
+# precisam ser diferenciados.
 #
 # Esse comportamento (bater no IP puro, sem host) e exatamente o que o
 # Azure API Management (OficinaMecanica.Infra/apim/) usa como "service_url" - a APIM ficou
