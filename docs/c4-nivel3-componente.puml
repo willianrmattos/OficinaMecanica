@@ -29,13 +29,15 @@ Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 
     Component(domainEvents, "Domain Events", "MediatR INotification", "OrdemDeServicoCriadaEvent, StatusOrdemAlteradoEvent, OrcamentoGeradoEvent, OrcamentoAprovadoEvent, OrcamentoRecusadoEvent. Publicados pelo AppDbContext via IMediator apos SaveChangesAsync.")
 
-    Component(eventHandlers, "Event Handlers", "MediatR INotificationHandler", "StatusOrdemAlteradoEventHandler: consome StatusOrdemAlteradoEvent (qualquer transicao de status) e envia notificacao por e-mail ao cliente via IEmailService. Unico handler ja implementado - os demais eventos nao tem consumidor ainda.")
+    Component(eventHandlers, "Event Handlers", "MediatR INotificationHandler", "StatusOrdemAlteradoEventHandler: consome StatusOrdemAlteradoEvent (qualquer transicao de status) e envia notificacao por e-mail ao cliente via IEmailService. MetricasNegocioEventHandlers: consome OrdemDeServicoCriadaEvent e OrcamentoRecusadoEvent, so incrementa contadores de observabilidade. OrcamentoGeradoEvent e OrcamentoAprovadoEvent ainda nao tem consumidor.")
 
     Component(emailSvc, "IEmailService / SmtpEmailService", "Application.Interfaces / Infrastructure.Services (MailKit)", "Envia e-mail via SMTP direto (sem provedor externo). Resiliente: falha de conexao/envio so loga Warning, nunca lanca excecao.")
 
     Component(repos, "Repositories", "EF Core / IRepository", "ClienteRepository, VeiculoRepository, ServicoRepository, PecaRepository, OrdemDeServicoRepository. Implementam interfaces definidas no dominio.")
 
     Component(dbctx, "AppDbContext / IUnitOfWork", "Entity Framework Core 8", "Configuracoes Fluent API com ConcurrencyToken. Gerencia transacoes ACID. Publica Domain Events via IMediator apos SaveChangesAsync.")
+
+    Component(metricas, "MetricasNegocio", "System.Diagnostics.Metrics (Meter)", "Contadores (OrdensCriadas, OrcamentosRecusados, EmailsFalha) e histograma (TempoExecucaoHoras, com dimensao 'status'). MetricasDeNegocioBackgroundService recalcula o tempo medio por status a cada 5 minutos, via IOrdemDeServicoRepository. Exportado via OpenTelemetry (OTLP) pro OpenTelemetry Collector.")
 }
 
 Rel_D(admin, middleware, "Requisicoes autenticadas (JWT Bearer)", "HTTPS")
@@ -52,8 +54,10 @@ Rel_D(qryHandlers, repos, "Consulta via interfaces do dominio")
 Rel_D(repos, dbctx, "Usa transacao compartilhada")
 Rel(dbctx, domainEvents, "Publica pos-SaveChanges", "IMediator.Publish")
 Rel_D(dbctx, db, "Le e escreve via EF Core", "SQL / TDS 1433")
-Rel_D(domainEvents, eventHandlers, "Despacha StatusOrdemAlteradoEvent", "IMediator.Publish")
+Rel_D(domainEvents, eventHandlers, "Despacha os eventos consumidos", "IMediator.Publish")
 Rel(eventHandlers, emailSvc, "Envia notificacao", "IEmailService")
 Rel_R(emailSvc, smtp, "Conecta e envia", "SMTP")
+Rel(eventHandlers, metricas, "Incrementa contadores")
+Rel(repos, metricas, "Alimenta o calculo do tempo medio", "ObterTempoMedioPorStatusAsync")
 
 @enduml
