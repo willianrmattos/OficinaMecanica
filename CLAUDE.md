@@ -162,7 +162,8 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
   - **AKS/producao**: **Azure SQL Database** real (`svsfiap.database.windows.net`, tier serverless sempre-gratis, provisionado via `OficinaMecanica.Infra/sqldb/`), connection string sincronizada do Key Vault (ver secao "Kubernetes")
   - **Docker Compose/desenvolvimento local**: container `sqlserver` (`mcr.microsoft.com/mssql/server:2022-latest`, edicao Developer) no proprio `docker-compose.yml`, com volume nomeado (`sqlserver_data`) pra persistir entre `docker compose down`/`up` — optei por rodar local em vez de sempre depender do Azure SQL estar acessivel/acordado (tier serverless com auto-pause), so pra desenvolver
 - Configurations em `Infrastructure/Data/Configurations/`
-- Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra qualquer um dos dois bancos acima, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
+- Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra o banco local do docker-compose, ja que ele mantem `ASPNETCORE_ENVIRONMENT=Development`. No AKS, `ASPNETCORE_ENVIRONMENT=Production` (corrigido - era um bug, ficava fixo em `Development` mesmo em producao) desliga esse gate, entao as migrations sao aplicadas explicitamente no CI (`dotnet ef database update`, step "Aplicar migrations" do job `deploy-to-aks` - ver secao "CI/CD")
+- Resiliencia a falha transitoria: `AddDbContext` usa `EnableRetryOnFailure` (`DependencyInjection.cs`) — o Azure SQL Database serverless "pausa" apos periodo ocioso, e a primeira conexao apos a pausa (cold start) pode falhar sem o retry
 - No Docker Compose, a connection string do `sqlserver` local e montada direto no `docker-compose.yml` (usuario `sa`, senha vinda de `MSSQL_SA_PASSWORD` no `.env`) — nao ha mais dependencia do Azure SQL pra desenvolvimento local
 - `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env`/`docker-compose.yml` sempre tem precedencia quando rodando via `docker compose`
 - O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `MSSQL_SA_PASSWORD` (SQL Server local), `GRAFANA_ADMIN_PASSWORD` (Grafana local), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
@@ -339,21 +340,27 @@ Store driver — ver `secret-provider-class.yaml` acima e
 de um commit novo — util por exemplo depois de um `terraform apply` que nao
 mexeu em codigo da aplicacao).
 
-1. **`build-and-test`**: roda em todo push/PR pra `main`. Restore, build
+1. **`build-and-test`**: roda em todo push/PR pra `main` ou `release`
+   (homologacao - ver secao "Ambiente de Homologacao"). Restore, build
    (Release), os 3 projetos de teste (`dotnet test`, cache de pacotes NuGet),
    resultados publicados como Job Summary via `dorny/test-reporter`
    (`.trx`) e como artifact (`test-results`, retencao de 90 dias).
-2. **`build-and-push-image`**: só em push de verdade na `main` ou
+2. **`build-and-push-image`**: só em push de verdade na `main`/`release` ou
    `workflow_dispatch` (nao em PR). Autentica no Azure via `azure/login@v2`
    (OIDC — ver `OficinaMecanica.Infra/github_oidc/`), `az acr login`, e publica a imagem no
-   `acrfiap` com 2 tags: `${{ github.sha }}` (hash do commit) e `latest`,
-   via `docker/build-push-action` (cache de camadas `type=gha`).
-3. **`deploy-to-aks`**: idem (push ou `workflow_dispatch` na `main`). Autentica via
-   `azure/aks-set-context@v4` (`admin: true`, usa contas locais do cluster,
-   nao Azure RBAC de autorizacao dentro do Kubernetes), aplica
-   `k8s/oficinamecanica-api/` e `k8s/mailpit/`, e usa
-   `kubectl set image` apontando pro hash do commit (nao o `:latest` fixo
-   do YAML) + `kubectl rollout status` pra confirmar.
+   `acrfiap` sempre com a tag `${{ github.sha }}` (hash do commit) - a tag
+   `latest` so e adicionada quando o push foi na `main` (um push em
+   `release` nao deve sobrescrever o `latest` que reflete producao), via
+   `docker/build-push-action` (cache de camadas `type=gha`).
+3. **`deploy-to-aks`**: idem (push ou `workflow_dispatch` na `main`/`release`
+   - mesmo Deployment nos dois casos, ver "Ambiente de Homologacao").
+   Primeiro aplica as migrations pendentes (`dotnet ef database update`,
+   buscando a connection string do Key Vault via a mesma sessao OIDC - ver
+   "Banco de Dados"), depois autentica via `azure/aks-set-context@v4`
+   (`admin: true`, usa contas locais do cluster, nao Azure RBAC de
+   autorizacao dentro do Kubernetes), aplica `k8s/oficinamecanica-api/` e
+   `k8s/mailpit/`, e usa `kubectl set image` apontando pro hash do commit
+   (nao o `:latest` fixo do YAML) + `kubectl rollout status` pra confirmar.
 
 Autenticacao via **OIDC** (`OficinaMecanica.Infra/github_oidc/`) — o GitHub emite um token de
 identidade por execucao, sem nenhum secret de longa duracao guardado no

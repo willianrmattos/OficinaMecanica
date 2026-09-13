@@ -21,6 +21,23 @@ Esta fase evolui a aplicacao de um container isolado (`docker compose`) para uma
 | Event Storming | [docs/event-storming.pdf](docs/event-storming.pdf) |
 | Relatorio SonarQube (qualidade) | [docs/sonarqube-report.md](docs/sonarqube-report.md) |
 | Relatorio Trivy (vulnerabilidades) | [docs/trivy-report.md](docs/trivy-report.md) |
+| Diagrama de Sequencia (autenticacao + abertura de OS) | [docs/diagramas/diagrama-de-sequencia.jpg](docs/diagramas/diagrama-de-sequencia.jpg) |
+
+## RFCs (decisoes de "por que essa direcao")
+
+| RFC | Titulo |
+|-----|--------|
+| 0001 | [Clean Architecture + DDD + CQRS via MediatR](docs/rfc/0001-clean-architecture-ddd-cqrs-mediatr.md) |
+| 0002 | [Eventos de dominio in-process (MediatR) vs. broker externo](docs/rfc/0002-eventos-de-dominio-in-process-vs-broker-externo.md) |
+| 0003 | [Divisao do ecossistema em multiplos repositorios](docs/rfc/0003-divisao-do-ecossistema-em-multiplos-repositorios.md) |
+| 0004 | [Escolha de .NET 8 / C# como stack do monolito](docs/rfc/0004-escolha-de-dotnet-8-e-csharp.md) |
+
+## ADRs (decisoes tecnicas pontuais)
+
+| ADR | Titulo |
+|-----|--------|
+| 0001 | [Comunicacao sincrona via HTTP/JWKS (sem mensageria)](docs/adr/0001-comunicacao-sincrona-http-jwks.md) |
+| 0002 | [Migrations do EF Core via step explicito no CI](docs/adr/0002-migrations-via-step-explicito-no-ci.md) |
 
 ## Arquitetura
 
@@ -164,10 +181,14 @@ dotnet tool install --global dotnet-sonarscanner
 
 ```powershell
 # Windows — obtenha o token em http://localhost:9000/account/security
-dotnet sonarscanner begin /k:"oficina-mecanica" /n:"OficinaMecanica" /v:"1.0.0" `
+# IMPORTANTE: incremente o /v: (versao) a cada nova rodada de analise -
+# reusar o mesmo valor faz o Quality Gate acumular "codigo novo" desde a
+# ultima vez que a versao realmente mudou, nao so desde a ultima analise.
+dotnet sonarscanner begin /k:"oficina-mecanica" /n:"OficinaMecanica" /v:"1.1.0" `
   /d:sonar.host.url="http://localhost:9000" /d:sonar.token="SEU_TOKEN" `
   /d:sonar.cs.opencover.reportsPaths="**/coverage.opencover.xml" `
-  /d:sonar.cs.vstest.reportsPaths="**/*.trx"
+  /d:sonar.cs.vstest.reportsPaths="**/*.trx" `
+  /d:sonar.exclusions="stress/**"
 
 dotnet build --no-incremental -c Release
 
@@ -423,7 +444,8 @@ A collection completa e interativa da API (todas as rotas, schemas de request/re
 |----------|-----|
 | Local (`dotnet run`) | `https://localhost:{porta}` (porta exibida no console ao subir a API) |
 | Docker (`docker compose up -d`) | http://localhost:5000 |
-| AKS (producao) | IP publico do `ingress-nginx` — `kubectl get svc -n ingress-nginx ingress-nginx-controller` (coluna `EXTERNAL-IP`) |
+| AKS (producao, direto) | IP publico do `ingress-nginx` — `kubectl get svc -n ingress-nginx ingress-nginx-controller` (coluna `EXTERNAL-IP`) |
+| Producao (via APIM, recomendado) | https://apimfiap.azure-api.net/oficinaserver/index.html |
 
 Nos tres casos a Swagger UI fica na raiz (`/`, `RoutePrefix` vazio) e o JSON OpenAPI cru em `/swagger/v1/swagger.json`.
 
@@ -445,7 +467,7 @@ irmao, Azure Function separada). Pra obter um token:
 ```bash
 curl -X POST https://apimfiap.azure-api.net/segurancaserver/login \
   -H "Content-Type: application/json" \
-  -d '{"nomeUsuario":"admin","senha":"<senha>"}'
+  -d '{"cpf":"74921686084","senha":"<senha>"}'
 ```
 
 A chave publica usada pra validar a assinatura e resolvida dinamicamente via
@@ -570,7 +592,7 @@ Os eventos sao publicados pelo `AppDbContext.SaveChangesAsync` via `IMediator.Pu
 | `OrcamentoAprovadoEvent` | Orcamento e aprovado (`EmExecucao`) | `OrdemDeServicoId`, `Numero` |
 | `OrcamentoRecusadoEvent` | Orcamento e recusado (`OrcamentoRecusado`) | `OrdemDeServicoId`, `Numero`, `Motivo` |
 
-> **Estado atual:** `StatusOrdemAlteradoEvent` tem um `INotificationHandler` implementado — `StatusOrdemAlteradoEventHandler` (`OficinaMecanica.Application.EventHandlers`), que envia e-mail ao cliente a cada mudanca de status (ver secao [Notificacao por E-mail](#notificacao-por-e-mail)). Um unico handler nesse evento cobre todas as transicoes (aprovacao, recusa, avanco de diagnostico etc.) sem precisar de um handler por evento especifico. Os demais eventos (`OrdemDeServicoCriadaEvent`, `OrcamentoGeradoEvent`, `OrcamentoAprovadoEvent`, `OrcamentoRecusadoEvent`) continuam publicados mas sem nenhum handler consumindo-os — ficam disponiveis para casos de uso futuros (ex: notificacao de estoque critico, integracao com sistemas externos) sem exigir mudanca no dominio.
+> **Estado atual:** `StatusOrdemAlteradoEvent` tem um `INotificationHandler` implementado — `StatusOrdemAlteradoEventHandler` (`OficinaMecanica.Application.EventHandlers`), que envia e-mail ao cliente a cada mudanca de status (ver secao [Notificacao por E-mail](#notificacao-por-e-mail)). Um unico handler nesse evento cobre todas as transicoes (aprovacao, recusa, avanco de diagnostico etc.) sem precisar de um handler por evento especifico. `OrdemDeServicoCriadaEvent` e `OrcamentoRecusadoEvent` tambem tem handler — `MetricasNegocioEventHandlers` (`OficinaMecanica.Application.EventHandlers`), que so incrementa contadores de observabilidade (`OrdensCriadas`/`OrcamentosRecusados`, ver `MetricasNegocio.cs`), sem regra de negocio. `OrcamentoGeradoEvent` e `OrcamentoAprovadoEvent` continuam publicados mas sem nenhum handler consumindo-os — ficam disponiveis para casos de uso futuros (ex: notificacao de estoque critico, integracao com sistemas externos) sem exigir mudanca no dominio.
 
 ## Notificacao por E-mail
 
