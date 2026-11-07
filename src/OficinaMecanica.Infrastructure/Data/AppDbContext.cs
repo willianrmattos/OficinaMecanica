@@ -1,6 +1,7 @@
 using OficinaMecanica.Domain.Common;
 using OficinaMecanica.Domain.Entities;
 using OficinaMecanica.Domain.Interfaces;
+using MassTransit;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 
@@ -9,6 +10,10 @@ namespace OficinaMecanica.Infrastructure.Data;
 public class AppDbContext : DbContext, IUnitOfWork
 {
     private readonly IMediator _mediator;
+
+    // Domain events de um SaveChanges feito dentro de uma transacao que ainda nao foi confirmada. Quem os
+    // despacha (ou descarta) e o DomainEventsPosCommitInterceptor, quando a transacao termina.
+    private readonly List<DomainEvent> _eventosAguardandoCommit = new();
 
     public DbSet<Cliente> Clientes => Set<Cliente>();
     public DbSet<Veiculo> Veiculos => Set<Veiculo>();
@@ -27,6 +32,13 @@ public class AppDbContext : DbContext, IUnitOfWork
     protected override void OnModelCreating(ModelBuilder modelBuilder)
     {
         modelBuilder.ApplyConfigurationsFromAssembly(typeof(AppDbContext).Assembly);
+
+        // Tabelas do MassTransit: o inbox deduplica por MessageId, o outbox guarda o que sera entregue ao broker
+        // e o estado do outbox controla a entrega. Ficam no mesmo banco para entrar na mesma transacao do SaveChanges.
+        modelBuilder.AddInboxStateEntity();
+        modelBuilder.AddOutboxMessageEntity();
+        modelBuilder.AddOutboxStateEntity();
+
         base.OnModelCreating(modelBuilder);
     }
 
@@ -61,7 +73,19 @@ public class AppDbContext : DbContext, IUnitOfWork
 
         domainEntities.ForEach(e => e.ClearDomainEvents());
 
+        // Lido antes do save: o commit implicito do EF (sem transacao do chamador) fecha a transacao dentro do
+        // proprio SaveChanges e nao deixa rastro em CurrentTransaction.
+        var transacaoDoChamadorAberta = Database.CurrentTransaction != null;
+
         var result = await base.SaveChangesAsync(cancellationToken);
+
+        if (transacaoDoChamadorAberta)
+        {
+            // Consumer/saga: o MassTransit abre a transacao e o consumer pode ser repetido. Despachar agora
+            // mandaria o e-mail de uma tentativa que ainda pode ser desfeita; o interceptor despacha no commit.
+            _eventosAguardandoCommit.AddRange(domainEvents);
+            return result;
+        }
 
         foreach (var domainEvent in domainEvents)
         {
@@ -70,4 +94,13 @@ public class AppDbContext : DbContext, IUnitOfWork
 
         return result;
     }
+
+    internal IReadOnlyList<DomainEvent> RetirarEventosAguardandoCommit()
+    {
+        var eventos = _eventosAguardandoCommit.ToList();
+        _eventosAguardandoCommit.Clear();
+        return eventos;
+    }
+
+    internal void DescartarEventosAguardandoCommit() => _eventosAguardandoCommit.Clear();
 }

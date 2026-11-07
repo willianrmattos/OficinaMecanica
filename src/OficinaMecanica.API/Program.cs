@@ -1,9 +1,12 @@
 using OficinaMecanica.Application;
 using OficinaMecanica.Application.Observabilidade;
 using OficinaMecanica.API.BackgroundServices;
+using OficinaMecanica.API.Health;
 using OficinaMecanica.Infrastructure;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Infrastructure.Messaging;
 using OficinaMecanica.API.Middleware;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
@@ -47,6 +50,7 @@ builder.Host.UseSerilog();
 // Services
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddMensageria(builder.Configuration);
 
 if (!string.IsNullOrWhiteSpace(otelEndpoint))
 {
@@ -55,6 +59,7 @@ if (!string.IsNullOrWhiteSpace(otelEndpoint))
         .WithTracing(tracing => tracing
             .AddAspNetCoreInstrumentation()
             .AddSqlClientInstrumentation()
+            .AddSource("MassTransit")
             .AddOtlpExporter(otlp => otlp.Endpoint = new Uri(otelEndpoint)))
         .WithMetrics(metrics => metrics
             .AddAspNetCoreInstrumentation()
@@ -180,7 +185,16 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapMetrics();
-app.MapHealthChecks("/health");
+// /health so confirma que o processo esta de pe (probe de liveness: uma queda de dependencia nao pode fazer o
+// Kubernetes reiniciar o pod). /health/ready (tag "ready") cobre as dependencias: o SQL Server, sem o qual a API nao
+// aceita escrita, devolve 503 quando cai; o RabbitMQ (RabbitMqHealthCheck, conexao AMQP de verdade) devolve Degraded,
+// que continua 200 porque o outbox segura as mensagens ate o broker voltar. O alerta do broker fica por metrica.
+app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = check => !check.Tags.Contains("ready") });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = ProntidaoResponseWriter.EscreverAsync
+});
 
 Log.Information("OficinaMecanica API iniciada com sucesso.");
 

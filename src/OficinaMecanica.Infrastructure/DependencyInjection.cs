@@ -1,3 +1,4 @@
+using MassTransit.DependencyInjection;
 using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Domain.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
@@ -17,18 +18,35 @@ public static class DependencyInjection
 {
     public static IServiceCollection AddInfrastructure(this IServiceCollection services, IConfiguration configuration)
     {
+        // O interceptor e singleton: o EF cria um service provider interno por combinacao de opcoes, e uma
+        // instancia nova a cada contexto geraria um provider por requisicao.
+        services.AddSingleton<DomainEventsPosCommitInterceptor>();
+
         // EF Core
-        services.AddDbContext<AppDbContext>(options =>
-            options.UseSqlServer(
-                configuration.GetConnectionString("DefaultConnection"),
-                b => b
-                    .MigrationsAssembly(typeof(AppDbContext).Assembly.FullName)
-                    // Azure SQL Database serverless pausa por inatividade (auto_pause_delay_in_minutes,
-                    // ver OficinaMecanica.Infra) - a primeira conexao apos o pause falha com erro
-                    // transitorio 40613 ("nao esta disponivel, tente novamente") enquanto o banco acorda.
-                    // Sem isso, essa falha subia como 500 pro cliente em vez de so esperar e tentar de novo.
-                    .EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null)
-            ));
+        services.AddDbContext<AppDbContext>((provider, options) =>
+            options
+                .UseSqlServer(
+                    configuration.GetConnectionString("DefaultConnection"),
+                    b =>
+                    {
+                        b.MigrationsAssembly(typeof(AppDbContext).Assembly.FullName);
+
+                        // Azure SQL Database serverless pausa por inatividade (auto_pause_delay_in_minutes,
+                        // ver OficinaMecanica.Infra) - a primeira conexao apos o pause falha com erro
+                        // transitorio 40613 ("nao esta disponivel, tente novamente") enquanto o banco acorda.
+                        // Sem isso, essa falha subia como 500 pro cliente em vez de so esperar e tentar de novo.
+                        //
+                        // Dentro de um consumer o retry fica desligado: o consumer ja roda numa transacao do
+                        // MassTransit, o replay do EF reaproveitaria um ChangeTracker velho (viraria
+                        // DbUpdateConcurrencyException) e quem repete com estado limpo e o UseMessageRetry, que
+                        // reprocessa a mensagem inteira num escopo novo.
+                        if (!DentroDeUmConsumer(provider))
+                            b.EnableRetryOnFailure(maxRetryCount: 5, maxRetryDelay: TimeSpan.FromSeconds(30), errorNumbersToAdd: null);
+                    })
+                .AddInterceptors(provider.GetRequiredService<DomainEventsPosCommitInterceptor>()));
+
+        // Prontidao: sem o banco a API nao aceita escrita, entao so ele tira o pod de rotacao (ver RabbitMqHealthCheck).
+        services.AddHealthChecks().AddCheck<SqlServerHealthCheck>("sqlserver", tags: new[] { "ready" });
 
         // Unit of Work
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<AppDbContext>());
@@ -85,4 +103,9 @@ public static class DependencyInjection
 
         return services;
     }
+
+    // O escopo DI de cada mensagem consumida tem um ConsumeContext empilhado pelo MassTransit; o de uma
+    // requisicao HTTP nao. Fora do MassTransit (ex.: ferramentas do EF) o servico nem existe.
+    private static bool DentroDeUmConsumer(IServiceProvider provider) =>
+        provider.GetService<IScopedConsumeContextProvider>()?.HasContext ?? false;
 }

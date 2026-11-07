@@ -27,6 +27,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OficinaMecanica.Contracts",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OficinaMecanica.Contracts.Tests", "tests\OficinaMecanica.Contracts.Tests\OficinaMecanica.Contracts.Tests.csproj", "{D1A7C0F2-5B6E-4B1F-9C3A-0A1B2C3D4E52}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "OficinaMecanica.Infrastructure.Tests", "tests\OficinaMecanica.Infrastructure.Tests\OficinaMecanica.Infrastructure.Tests.csproj", "{9AB6BF90-6911-4372-8271-00632B8502F5}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -76,6 +78,10 @@ Global
 		{D1A7C0F2-5B6E-4B1F-9C3A-0A1B2C3D4E52}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{D1A7C0F2-5B6E-4B1F-9C3A-0A1B2C3D4E52}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{D1A7C0F2-5B6E-4B1F-9C3A-0A1B2C3D4E52}.Release|Any CPU.Build.0 = Release|Any CPU
+		{9AB6BF90-6911-4372-8271-00632B8502F5}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{9AB6BF90-6911-4372-8271-00632B8502F5}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{9AB6BF90-6911-4372-8271-00632B8502F5}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{9AB6BF90-6911-4372-8271-00632B8502F5}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(NestedProjects) = preSolution
 		{F754D498-8690-4633-AE21-AD1C2D82CD55} = {A3B0282A-33BC-49CC-8422-F7754F8BF3D4}
@@ -88,5 +94,6 @@ Global
 		{C28FE333-0C97-45C8-9B86-DE0294A8F20E} = {B47C1781-B981-48A2-927A-AE84235C922A}
 		{D1A7C0F2-5B6E-4B1F-9C3A-0A1B2C3D4E51} = {A3B0282A-33BC-49CC-8422-F7754F8BF3D4}
 		{D1A7C0F2-5B6E-4B1F-9C3A-0A1B2C3D4E52} = {B47C1781-B981-48A2-927A-AE84235C922A}
+		{9AB6BF90-6911-4372-8271-00632B8502F5} = {B47C1781-B981-48A2-927A-AE84235C922A}
 	EndGlobalSection
 EndGlobal

@@ -2,7 +2,7 @@
 
 ## Visao Geral
 
-Backend .NET 8 com DDD, Clean Architecture e CQRS (MediatR) para gestao de oficina mecanica.
+Backend .NET 8 (EF Core 9) com DDD, Clean Architecture e CQRS (MediatR) para gestao de oficina mecanica. Em evolucao para o OS Service da saga: ja publica mensagens de integracao pelo outbox do MassTransit/RabbitMQ (ver secao "Mensageria"); a saga em si e a F3b.
 
 ## Estrutura do Projeto
 
@@ -10,12 +10,13 @@ Backend .NET 8 com DDD, Clean Architecture e CQRS (MediatR) para gestao de ofici
 src/
   OficinaMecanica.Domain/          # Entidades, Value Objects, Enums, Domain Events, Interfaces
   OficinaMecanica.Application/     # Commands, Queries, Handlers (MediatR), DTOs, Validators (FluentValidation), Event Handlers, Interfaces (ex: IEmailService)
-  OficinaMecanica.Infrastructure/  # EF Core (Azure SQL Database), Repositories, JWT Auth (so validacao via JWKS), SmtpEmailService (MailKit)
+  OficinaMecanica.Infrastructure/  # EF Core 9 (Azure SQL Database), Repositories, JWT Auth (so validacao via JWKS), SmtpEmailService (MailKit), Messaging (MassTransit + RabbitMQ + outbox/inbox)
   OficinaMecanica.API/             # Controllers REST, ExceptionHandlingMiddleware, Swagger, Program.cs
 tests/
   OficinaMecanica.Domain.Tests/       # Testes unitarios (entidades, VOs, regras de negocio)
   OficinaMecanica.Application.Tests/  # Testes dos handlers e validators (Moq)
-  OficinaMecanica.Integration.Tests/  # Testes de integracao (WebApplicationFactory + InMemory)
+  OficinaMecanica.Integration.Tests/  # Testes de integracao (WebApplicationFactory + InMemory, bus em memoria)
+  OficinaMecanica.Infrastructure.Tests/ # Testes de infraestrutura: publisher/DI sem Docker + [Category=Infra] com Testcontainers (SQL Server e RabbitMQ reais)
   OficinaMecanica.Tests.Common/       # Builders de entidades com Bogus, compartilhados por Domain.Tests e Application.Tests
 k8s/                                    # Manifests Kubernetes (Deployment, Service, Ingress, HPA) - ver secao "Kubernetes"
 local/                                  # Configs da stack de observabilidade do docker-compose (Prometheus, Loki, Alloy, Grafana) - ver secao "Docker"
@@ -33,18 +34,32 @@ local/                                  # Configs da stack de observabilidade do
 # Build
 dotnet build
 
-# Testes
+# Testes (sem Docker: pula os de infraestrutura, que sobem SQL Server e RabbitMQ via Testcontainers)
+dotnet test --filter "Category!=Infra"
+
+# Testes de infraestrutura (precisam de Docker; ver secao "Mensageria")
+dotnet test tests/OficinaMecanica.Infrastructure.Tests --filter "Category=Infra"
+
+# Tudo, inclusive Infra
 dotnet test
+
+# Ferramentas versionadas em dotnet-tools.json (dotnet-ef 9.0.22 e reportgenerator); o dotnet-ef global do sistema e antigo demais para o EF Core 9
+dotnet tool restore
+dotnet ef migrations add <Nome> --project src/OficinaMecanica.Infrastructure --startup-project src/OficinaMecanica.API
 
 # Testes com cobertura (OpenCover)
 dotnet test tests/OficinaMecanica.Domain.Tests --collect:"XPlat Code Coverage" --results-directory TestResults/Domain -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
 dotnet test tests/OficinaMecanica.Application.Tests --collect:"XPlat Code Coverage" --results-directory TestResults/Application -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
 dotnet test tests/OficinaMecanica.Integration.Tests --collect:"XPlat Code Coverage" --results-directory TestResults/Integration -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+dotnet test tests/OficinaMecanica.Infrastructure.Tests --collect:"XPlat Code Coverage" --results-directory TestResults/Infrastructure -- DataCollectionRunSettings.DataCollectors.DataCollector.Configuration.Format=opencover
+
+# Cobertura mesclada dos projetos (exclusoes: Migrations, Program.cs, DependencyInjection*, EF Configurations)
+dotnet reportgenerator -reports:"TestResults/**/coverage.opencover.xml" -targetdir:TestResults/Report -reporttypes:TextSummary "-assemblyfilters:+OficinaMecanica.Domain;+OficinaMecanica.Application;+OficinaMecanica.Infrastructure;+OficinaMecanica.API" "-classfilters:-*Migrations*;-*DependencyInjection*;-*Configuration;-Program"
 
 # Executar API localmente
 dotnet run --project src/OficinaMecanica.API
 
-# Docker (sobe API + SonarQube; o banco e Azure SQL externo, ver secao "Banco de Dados")
+# Docker (sobe API, SQL Server, RabbitMQ, SonarQube e a stack de observabilidade; ver secao "Docker")
 docker compose up -d
 
 # Rebuild da imagem da API apos mudancas de codigo
@@ -70,9 +85,9 @@ dotnet add <projeto> package <pacote> --source https://api.nuget.org/v3/index.js
 - **Clean Architecture**: Domain -> Application -> Infrastructure -> API (dependencias de fora para dentro)
 - **DDD**: Aggregates (Cliente, OrdemDeServico, Servico, Peca), Entities (Veiculo, ItemServico, ItemPeca, HistoricoStatus), Value Objects (Documento, Placa), Domain Events
 - **CQRS**: Commands (escrita) e Queries (leitura) separados, handlers via MediatR
-- **ValidationBehavior**: Pipeline MediatR que roda FluentValidation antes dos handlers
+- **ValidationBehavior**: Pipeline MediatR que roda FluentValidation antes dos handlers. Restringido a `where TRequest : notnull` (e nao a `IRequest<TResponse>`) para tambem fechar para commands sem retorno (`IRequest`), e cada validator recebe um `ValidationContext` proprio (um contexto compartilhado repetiria as falhas do primeiro validator no resultado do segundo)
 - **Repository Pattern**: Interfaces no Domain, implementacoes na Infrastructure
-- **Unit of Work**: AppDbContext implementa IUnitOfWork, despacha Domain Events apos SaveChanges
+- **Unit of Work**: AppDbContext implementa IUnitOfWork e despacha Domain Events apos SaveChanges; se ha transacao do chamador aberta (consumer/saga do MassTransit), os eventos ficam guardados e saem so depois do COMMIT, em escopo DI novo (ver secao "Mensageria")
 - **Concorrencia Otimista**: Propriedade `Version` como ConcurrencyToken
 - **Testes**: Moq para mocks (Application.Tests), Bogus para dados fake, builders fluentes em `OficinaMecanica.Tests.Common/Builders/` (ClienteBuilder, VeiculoBuilder, PecaBuilder, ServicoBuilder, OrdemDeServicoBuilder)
 
@@ -89,12 +104,12 @@ Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExe
 - **Enum persistido como int, nunca renumerar**: `OrcamentoRecusado=0 ... Entregue=6`, `AguardandoPagamento=7`, `Cancelada=8`. Por isso a listagem nao ordena mais pelo numero (ver abaixo).
 - **Aprovar orcamento** (`AprovarOrcamento()`) vai pra `AguardandoPagamento` e **nao da mais baixa no estoque**. `IniciarExecucao()` leva `AguardandoPagamento -> EmExecucao`. Criar OS so *valida* estoque; a reserva acontece depois, na aprovacao.
 - **Campos novos da OS**: `ParticipaDaSaga` (true no construtor; OS antigas ficam false pelo default da coluna e respondem 409 em aprovar/recusar/cancelar), `EstoqueReservado`, `PagamentoId`, `LinkPagamento`, `PagamentoExpiraEm`, `MotivoCancelamento`. `Cancelar(motivo)`, `RegistrarPagamentoSolicitado`, `ReservarEstoque`/`LiberarEstoque` (so o flag) sao idempotentes; `JaAlcancou(status)` e o que torna os commands internos no-op em reentrega.
-- **Mensagens de integracao** (`OficinaMecanica.Contracts.*`): publicadas so pelo handler via `IIntegrationEventPublisher` (`Application/Interfaces`), **antes** do `SaveChangesAsync` (e ele que grava o outbox, mesmo sem mudar agregado). Nenhuma implementacao real registrada ainda (F3, MassTransit); os testes de integracao usam um fake no `CustomWebApplicationFactory`. `TimeProvider.System` esta registrado na Infrastructure; `MessageId` = `Guid.NewGuid()`, `OcorridoEm` = `TimeProvider.GetUtcNow()`.
+- **Mensagens de integracao** (`OficinaMecanica.Contracts.*`): publicadas so pelo handler via `IIntegrationEventPublisher` (`Application/Interfaces`), **antes** do `SaveChangesAsync` (e ele que grava o outbox, mesmo sem mudar agregado). A implementacao real (`MassTransitIntegrationEventPublisher`, outbox do EF) e registrada por `AddMensageria` (ver secao "Mensageria"); os testes de integracao a trocam por um fake no `CustomWebApplicationFactory`. `TimeProvider.System` esta registrado na Infrastructure; `MessageId` = `Guid.NewGuid()`, `OcorridoEm` = `TimeProvider.GetUtcNow()`.
 - **Commands HTTP so publicam, nao mudam status**: `AprovarOrcamento`/`RecusarOrcamento`/`CancelarOrdemDeServico` validam (OS existe -> `ParticipaDaSaga` -> status; `ConflitoException` -> 409) e publicam `ClienteAprovouOrcamento`/`ClienteRecusouOrcamento`/`CancelamentoSolicitado`. Quem muda o status e a saga (F3) chamando os **commands internos idempotentes**: `MarcarDiagnosticoIniciado`, `RegistrarOrcamentoGerado`, `ReservarEstoque` (tudo-ou-nada, devolve `ResultadoDaReservaDeEstoque`), `LiberarEstoque`, `AplicarAprovacaoDoOrcamento`, `AplicarRecusaDoOrcamento`, `RegistrarPagamentoSolicitado`, `IniciarExecucaoDaOrdem`, `FinalizarOrdem`, `CancelarOrdemPelaSaga` (nao rejeita motivo: vazio vira texto padrao e acima de 400 e truncado; so o HTTP `CancelarOrdemDeServico` exige e limita). Eles nao publicam nada e chamam `SaveChangesAsync`. Nao-encontrado continua `DomainException` (400), como no resto do repo.
 - **Retry da saga (F3)**: o retry do MassTransit deve ter `r.Ignore<ConflitoException>()`, `r.Ignore<DomainException>()` e `r.Ignore<ValidationException>()` (do FluentValidation; regra de negocio violada ou validacao reprovada nao se resolvem repetindo).
 - **E-mail**: `StatusOrdemAlteradoEventHandler` segue cobrindo toda transicao (`AguardandoPagamento` avisa que o link vem em seguida); `PagamentoSolicitadoEventHandler` manda o link + prazo (horario de Brasilia, offset fixo -03:00).
 - **Listagem**: ordem por `CASE` explicito em `OrdemDeServicoRepository` (`EmExecucao > AguardandoPagamento > AguardandoAprovacao > EmDiagnostico > Recebida > OrcamentoRecusado = Cancelada`), substitui o `OrderByDescending(Status)` descrito na secao "Listagem de Ordens de Servico" abaixo.
-- **Migration**: as colunas novas estao nas EF Configurations mas ainda **nao ha migration** (sai na F3, junto do upgrade do EF Core); `dotnet run` em Development contra SQL Server so funciona depois disso.
+- **Migration**: `AdicionaPagamentoEMensageria` cobre as colunas novas da OS (`ParticipaDaSaga` e `EstoqueReservado` com default `false` no schema, `PagamentoId`, `LinkPagamento`, `PagamentoExpiraEm`, `MotivoCancelamento`) e as tabelas do outbox/inbox (`OutboxMessage`, `OutboxState`, `InboxState`). Validada num SQL Server real a partir da `Initial`: OS antigas ficam com `ParticipaDaSaga = 0`.
 
 ## Autenticacao
 
@@ -156,7 +171,7 @@ Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExe
 
 - Toda mudanca de status de uma OS dispara e-mail ao cliente (se tiver `Email` cadastrado), via um unico `INotificationHandler<StatusOrdemAlteradoEvent>` (`StatusOrdemAlteradoEventHandler`, `OficinaMecanica.Application.EventHandlers`) — cobre todas as transicoes (aprovacao, recusa, avanco de diagnostico etc.) sem precisar de um handler por evento especifico
 - `IEmailService` (`OficinaMecanica.Application.Interfaces`) implementado por `SmtpEmailService` (`OficinaMecanica.Infrastructure.Services`, pacote `MailKit`) — sem provedor externo (SendGrid/etc), fala SMTP direto com um servidor configurado via `Smtp:Host`/`Smtp:Port`/`Smtp:Remetente`
-- Resiliente de proposito: qualquer falha (SMTP fora do ar, e-mail mal formado, timeout de 5s) e so logada como Warning, nunca lanca excecao — o handler roda de forma sincrona dentro do `SaveChangesAsync` (`AppDbContext.cs`), uma falha aqui nao pode derrubar a resposta HTTP do endpoint que mudou o status
+- Resiliente de proposito: qualquer falha (SMTP fora do ar, e-mail mal formado, timeout de 5s) e so logada como Warning, nunca lanca excecao — o handler roda de forma sincrona dentro do `SaveChangesAsync` (`AppDbContext.cs`) no caminho HTTP, uma falha aqui nao pode derrubar a resposta HTTP do endpoint que mudou o status. Dentro de um consumer (transacao do MassTransit) o e-mail so sai depois do commit, uma vez por mensagem confirmada, e nao por tentativa
 - Sem `Smtp:Host` configurado (default em `appsettings.json`), o envio e so ignorado com um Warning — a API funciona normalmente sem SMTP configurado
 - Dev local: servico `mailpit` no `docker-compose.yml` (UI web em `http://localhost:8025` pra ver os e-mails capturados, nao entrega nada de verdade pra fora)
 - AKS: mesmo Mailpit rodando dentro do cluster (`k8s/mailpit/`, imagem `axllent/mailpit`), pra poder demonstrar o fluxo de notificacao por e-mail sem depender de SMTP externo — `k8s/oficinamecanica-api/deployment.yaml` aponta `Smtp__Host`/`Smtp__Port` pro Service `mailpit` (mesmo namespace), UI web exposta via `k8s/mailpit/ingress.yaml` (host nip.io, mesmo padrao do Grafana/Prometheus)
@@ -169,14 +184,34 @@ Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExe
 
 ## Banco de Dados
 
-- SQL Server via EF Core — o banco em si difere entre ambientes, sem nenhuma mudanca no codigo da aplicacao (so a connection string muda):
+- SQL Server via EF Core 9 (9.0.22; o `MassTransit.EntityFrameworkCore 8.5.12` exige EF Core Relational 9.x, mesmo no alvo `net8.0`) — o banco em si difere entre ambientes, sem nenhuma mudanca no codigo da aplicacao (so a connection string muda):
   - **AKS/producao**: **Azure SQL Database** real (`svsfiap.database.windows.net`, tier serverless sempre-gratis, provisionado via `OficinaMecanica.Infra/sqldb/`), connection string sincronizada do Key Vault (ver secao "Kubernetes")
   - **Docker Compose/desenvolvimento local**: container `sqlserver` (`mcr.microsoft.com/mssql/server:2022-latest`, edicao Developer) no proprio `docker-compose.yml`, com volume nomeado (`sqlserver_data`) pra persistir entre `docker compose down`/`up` — optei por rodar local em vez de sempre depender do Azure SQL estar acessivel/acordado (tier serverless com auto-pause), so pra desenvolver
-- Configurations em `Infrastructure/Data/Configurations/`
+- Configurations em `Infrastructure/Data/Configurations/`; as tabelas do outbox/inbox do MassTransit entram no `OnModelCreating` (`AddInboxStateEntity`, `AddOutboxMessageEntity`, `AddOutboxStateEntity`), no mesmo banco, para participar da transacao do `SaveChanges`
+- **EF Core 9 recusa `Migrate()` quando o modelo tem mudancas sem migration** (`PendingModelChangesWarning`): depois de mexer em entidade ou configuration, gerar a migration (`dotnet ef migrations add`, ver "Comandos Uteis")
+- `EnableRetryOnFailure` (auto-pause do Azure SQL serverless, erro 40613) fica ligado so fora de consumer; dentro dele a resiliencia vem do `UseMessageRetry` (ver "Mensageria")
+- Testes de integracao com EF Core 9: o `AddDbContext` acumula `IDbContextOptionsConfiguration<T>`, entao o `CustomWebApplicationFactory` remove essa configuracao (alem de `DbContextOptions<T>`) antes de registrar o InMemory
 - Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra qualquer um dos dois bancos acima, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
 - No Docker Compose, a connection string do `sqlserver` local e montada direto no `docker-compose.yml` (usuario `sa`, senha vinda de `MSSQL_SA_PASSWORD` no `.env`) — nao ha mais dependencia do Azure SQL pra desenvolvimento local
 - `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env`/`docker-compose.yml` sempre tem precedencia quando rodando via `docker compose`
-- O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `MSSQL_SA_PASSWORD` (SQL Server local), `GRAFANA_ADMIN_PASSWORD` (Grafana local), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
+- O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `MSSQL_SA_PASSWORD` (SQL Server local), `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` (RabbitMQ local; **obrigatorias: o compose usa `${VAR:?}` e nao sobe sem elas; adicionar ao `.env` existente**, ver `.env.example`), `GRAFANA_ADMIN_PASSWORD` (Grafana local), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
+
+## Mensageria
+
+Infraestrutura de mensageria do OS Service (F3a). Decisoes e achados do spike em `docs/adr/0007-outbox-inbox-transacional-e-publicacao-antes-do-commit.md`; MassTransit fixado em `8.5.12` (nunca 9.x, ADR 0004).
+
+- **Composicao**: `Infrastructure/Messaging/MensageriaExtensions.cs`, `AddMensageria(services, configuration, registrarConsumers?, configurarEndpoints?)`, chamado no `Program.cs` depois de `AddInfrastructure`. Registra o bus RabbitMQ, `MassTransitHostOptions.WaitUntilStarted = true`, o outbox/inbox do EF (`AddEntityFrameworkOutbox<AppDbContext>` com `UseSqlServer()` + `UseBusOutbox()`, **sem** definir `IsolationLevel`: `Serializable` quebra o servico de entrega) e `MassTransitIntegrationEventPublisher` como `IIntegrationEventPublisher`.
+- **Publicar sempre antes do `SaveChangesAsync`** (e o save que grava o `OutboxMessage`); o publisher copia o `MessageId` do contrato para o do envelope (e por ele que o inbox deduplica).
+- **Endpoints**: use `ConfigurarRetryEOutbox(contexto)` (extension de `IReceiveEndpointConfigurator`) antes de `ConfigureConsumer`/`ConfigureSaga`: ela monta `UseMessageRetry` (intervalos exponenciais, ignora `DomainException`/`ConflitoException`/`ValidationException`) por fora de `UseEntityFrameworkOutbox`. O pipeline resultante e retry por fora, outbox/inbox por dentro, consumer por ultimo, e `ConfigurarRetryEOutboxTests` o le do probe do bus (`GetProbeResult`). Medido no MassTransit 8.5.12: ele monta o retry por fora mesmo se `UseEntityFrameworkOutbox` for chamado antes de `UseMessageRetry`, entao a ordem das chamadas nao muda o pipeline; o helper a mantem explicita e o teste protege contra uma versao ou configuracao que mude isso. `OrdemDosFiltrosDoEndpointTests` prova o efeito: so a publicacao da tentativa que confirma sai do banco.
+- **EF retry** so fora de consumer (`IScopedConsumeContextProvider.HasContext == false`, em `DependencyInjection.cs`); dentro, quem repete e o `UseMessageRetry`.
+- **Domain events pos-commit** (`AppDbContext` + `DomainEventsPosCommitInterceptor`): com transacao do chamador aberta os eventos ficam guardados e saem em `TransactionCommittedAsync`, em escopo DI novo; descartados em rollback ou commit que falha (o buffer de um rollback nao vaza para o commit seguinte do mesmo `DbContext`). Handler que falha depois do commit e so logado; um handler que escreve no banco so funciona por causa do escopo novo.
+- **Variaveis** (`docker-compose.yml`/`appsettings.json`): `RabbitMq__Host`, `RabbitMq__Port`, `RabbitMq__VirtualHost`, `RabbitMq__Username`, `RabbitMq__Password`; opcionais `Mensageria__RetryIntervalosMs__0..n` (padrao 500 ms, 2 s, 10 s, 30 s, 60 s), `Mensageria__OutboxQueryDelayMs` (1000) e `Mensageria__TimeoutDeInicioSegundos` (60). A API **nao sobe sem o RabbitMQ** (`WaitUntilStarted`, cai apos ~60 s sem broker); local, ele vem do `docker-compose.yml` (secao "Docker"). **`dotnet run` local exige `RabbitMq__Username` e `RabbitMq__Password`** (o `appsettings.json` os deixa vazios, como a senha do banco): sem eles o MassTransit tenta `guest`/`guest`, que o RabbitMQ do compose nao aceita (as credenciais vem de `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` do `.env`).
+- **Ponto de troca para testes**: `Mensageria__Transporte` (`RabbitMq` padrao | `EmMemoria`) e `Mensageria__Persistencia` (`EntityFramework` padrao | `Nenhuma`). O `CustomWebApplicationFactory` os troca via `UseSetting` (nao via `ConfigureAppConfiguration`, que so entra depois de o `Program` ler a configuracao) porque o EF InMemory nao suporta o outbox transacional. `AddMassTransitTestHarness()` chamado depois de `AddMensageria` com esses valores funciona (a base do BDD da F3b).
+- **Guarda de ambiente**: `ValidadorDasOpcoesDaMensageria` (`IValidateOptions` + `ValidateOnStart`) recusa a partida fora de `Development`/`Testing` se `Transporte != RabbitMq` ou `Persistencia != EntityFramework`, e e fail-closed em qualquer ambiente: `AddMensageria` lanca `InvalidOperationException` (pt-BR) para numero fora do enum (`0`, `9`, que o binder aceita) e para texto que nao e valor do enum, em vez de cair num ramo padrao "em memoria" (`OpcoesDaMensageria.UsaRabbitMq`/`UsaOutboxDoEntityFramework` sao `switch` que lanca), e o validador tambem recusa o valor indefinido. Os testes que simulam producao usam `Staging`.
+- **Health check de verdade**: o check do bus do MassTransit (tag `ready`) continua saudavel com o RabbitMQ parado enquanto o servico nao tem receive endpoints (medido: 200 por 80 s). Por isso `RabbitMqHealthCheck` abre uma conexao AMQP real (timeout de 3 s, `RabbitMQ.Client` que ja vem com o `MassTransit.RabbitMQ`) com a tag `ready` e responde `Degraded` (nao `Unhealthy`) quando o broker nao responde: `/health/ready` continua 200 e so o SQL Server fora vira 503 (ver "Observabilidade"). So existe com `Mensageria__Transporte=RabbitMq`.
+- **Testes**: `tests/OficinaMecanica.Infrastructure.Tests`. Sem Docker (publisher + `MessageId`, registro no DI, retry do EF por escopo, validador de ambiente, despacho de domain events do `AppDbContext` sobre EF InMemory): `dotnet test --filter "Category!=Infra"`. Com Docker, `[Trait("Category","Infra")]`: Testcontainers com SQL Server (`mcr.microsoft.com/mssql/server:2022-latest` fixado por digest, `MSSQL_MEMORY_LIMIT_MB=1024`) e RabbitMQ (`rabbitmq:4.4.0-management`), containers `os-f3a-*`, um banco e um virtual host novos por teste; rodar com `dotnet test tests/OficinaMecanica.Infrastructure.Tests --filter "Category=Infra"` (cobrem: outbox atomico no caminho HTTP com rollback, publish depois do save como controle negativo, mensagem duplicada consumida uma vez, excecoes de negocio vao direto para `_error` e falha tecnica esgota o retry, ordem dos filtros, retry do EF fora de consumer com conexao derrubada, domain events pos-commit em escopo novo sem e-mail fantasma, `MessageId` do envelope, `/health/ready` com o RabbitMQ parado (200, rabbitmq `Degraded`) e com o banco offline (503) e a migration aplicada a partir da `Initial`). Os consumers desses testes sao de teste, nao a saga.
+- **A F3a nao pode ser implantada sozinha**: o exchange fanout de cada contrato so nasce no primeiro publish e, sem fila ligada, o RabbitMQ descarta a mensagem e o outbox esvazia (medido: a 1a e a 2a OS criadas sem fila perderam o `OrdemDeServicoAberta`). A F3b/saga precisa criar a fila (endpoint em `Filas.Saga`) antes de aceitar trafego, ou reconciliar as OS `Recebida` sem saga. No k8s (F7): `/health` como liveness, `startupProbe` com folga de pelo menos 60 s (sem broker no boot a API cai apos ~60 s por `WaitUntilStarted`) e readiness em `/health/ready` (503 so com o SQL fora; broker fora fica `Degraded`/200). Cada probe de readiness abre uma conexao com o banco e, no Azure SQL serverless, impede o auto-pause: usar `periodSeconds` alto. Os checks de prontidao (SQL e broker, em paralelo) levam ate 3 s e o `timeoutSeconds` padrao do Kubernetes e 1 s: a readiness precisa de `timeoutSeconds >= 5`, e o `startupProbe`, de janela de pelo menos 60 s.
+- **Fica para a F3b**: saga (`MassTransitStateMachine`, estado + `SagaClassMap` no `OnModelCreating` + migration), activities que chamam os commands internos idempotentes, consumers/endpoints reais em `Filas.*` (usando `ConfigurarRetryEOutbox`), sweeper de prazos + `SagaPrazos`, `OnMissingInstance(Fault)` + retry para evento que chega antes da saga, BDD. Fica para F6/F7: RabbitMQ no AKS e as variaveis `RabbitMq__*` no `k8s/oficinamecanica-api/deployment.yaml` (hoje ausentes: sem elas o pod nao sobe), step de CI que aplica migrations e job dos testes Infra.
 
 ## Observabilidade
 
@@ -191,7 +226,7 @@ Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExe
   reinstalar agente nenhum.
 - `Program.cs`: bloco condicional (só ativa se `Otel:Endpoint` estiver
   configurado, mesmo padrao resiliente do `Smtp:Host`) monta
-  `AddOpenTelemetry()` com `.WithTracing()` (ASP.NET Core + SqlClient) e
+  `AddOpenTelemetry()` com `.WithTracing()` (ASP.NET Core + SqlClient + `AddSource("MassTransit")`, spans de publish/consume entre filas) e
   `.WithMetrics()` (ASP.NET Core + `OpenTelemetry.Instrumentation.Runtime`,
   cobre CPU/GC/heap do processo), ambos exportando via `AddOtlpExporter`.
   Serilog ganhou um `WriteTo.OpenTelemetry(...)` adicional (pacote
@@ -219,7 +254,7 @@ Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExe
   `OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`
   (`k8s/oficinamecanica-api/deployment.yaml`) - o `Histogram<double>` acima
   nao precisa disso, funciona corretamente com o default.
-- `GET /health`: health check simples (`AddHealthChecks()`/`MapHealthChecks`, sem verificacao de dependencias como banco) — so confirma que o processo esta de pe. Sem autenticacao.
+- `GET /health`: health check simples (`AddHealthChecks()`/`MapHealthChecks`, sem verificacao de dependencias como banco) — so confirma que o processo esta de pe. Sem autenticacao. Os checks de prontidao tem a tag `ready`: `sqlserver` (`SqlServerHealthCheck`, `CanConnectAsync` com limite de 3 s), `rabbitmq` (`RabbitMqHealthCheck`, conexao AMQP de verdade) e `masstransit-bus`. `/health` os exclui de proposito (uma queda de dependencia nao pode reiniciar o pod pela probe de liveness) e `GET /health/ready` (tambem anonimo, corpo JSON com o status de cada check) os inclui: **503 so quando o SQL Server cai** (sem ele a API nao aceita escrita); **broker fora = `Degraded`, HTTP 200**, porque o outbox segura as mensagens e tirar o pod de rotacao por causa do RabbitMQ transformaria a queda do broker em indisponibilidade total (o check do bus do MassTransit tambem tem a falha rebaixada para `Degraded`). O alerta operacional do broker fica por metrica (F9).
 - `GET /metrics`: metricas no formato Prometheus (`prometheus-net.AspNetCore`, `UseHttpMetrics()`/`MapMetrics()`) — sem nenhum Prometheus no AKS pra fazer scrape disso hoje (ver historico do repositorio), mantido so porque o docker-compose local ainda usa.
 - CPU/memoria de pods/nodes no AKS: integracao de Kubernetes da New Relic (`nri-bundle`, `OficinaMecanica.Infra/helm/newrelic.tf`), independente do Collector acima.
 - Alertas/dashboards: o MCP oficial da New Relic existe mas as ferramentas de criacao de dashboard/alerta sao premium-gated (nao funcionaram mesmo autenticado) - na pratica, o dashboard foi montado como JSON versionado (`E:\FIAP\Pos\dashboard.json`, raiz do workspace, importado manualmente via New Relic UI: Dashboards > Import dashboard) e o alerta foi criado direto via NerdGraph (`curl` + User API Key `NRAK-...`, mutations `alertsPolicyCreate`/`alertsNrqlConditionStaticCreate`) - nao Terraform, nao UI manual pro alerta.
@@ -233,7 +268,8 @@ Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExe
 ## Docker
 
 Servicos no docker compose (`docker compose up -d` sobe todos):
-- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — le SQL/JwksUri/Smtp/Otel, todos via `.env`
+- **oficinamecanica-api**: API .NET 8, porta 5000 (mapeada para 8080 interno) — le SQL/JwksUri/Smtp/Otel/RabbitMq, todos via `.env`
+- **oficinamecanica-rabbitmq**: RabbitMQ 4 (`rabbitmq:4.4.0-management`, tag pinada), AMQP na porta 5672 e UI de gerenciamento em `http://localhost:15672` (login `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` do `.env`), volume nomeado `rabbitmq_data`, healthcheck `rabbitmq-diagnostics ping`; a `api` so sobe depois dele saudavel. **Este compose e o dono do broker compartilhado**: `OficinaMecanica.Billing` e `OficinaMecanica.Execucao` (outros projetos de Compose) o alcancam por `host.docker.internal:5672` (`extra_hosts: host-gateway`, mesmo precedente do `JwksUri`), com as mesmas credenciais
 - **oficinamecanica-sqlserver**: SQL Server 2022 (edicao Developer), banco local — separado do Azure SQL Database usado em producao/AKS, que continua intacto (ver secao "Banco de Dados")
 - **oficinamecanica-sonar**: SonarQube 10 Community, porta 9000
 - **oficinamecanica-sonar-db**: PostgreSQL 15 (banco do SonarQube), interno

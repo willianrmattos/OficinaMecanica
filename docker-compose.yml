@@ -8,6 +8,8 @@ services:
     depends_on:
       sqlserver:
         condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     environment:
       ASPNETCORE_ENVIRONMENT: "Development"
       DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
@@ -20,6 +22,11 @@ services:
       Smtp__Port: "1025"
       Smtp__Remetente: "no-reply@oficinamecanica.local"
       Otel__Endpoint: "http://jaeger:4317"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "/"
+      RabbitMq__Username: "${RABBITMQ_DEFAULT_USER:?defina RABBITMQ_DEFAULT_USER no .env}"
+      RabbitMq__Password: "${RABBITMQ_DEFAULT_PASS:?defina RABBITMQ_DEFAULT_PASS no .env}"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
@@ -40,6 +47,28 @@ services:
       test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
       interval: 10s
       timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # Broker de mensageria do ecossistema. Este compose e o dono dele: o OficinaMecanica.Billing e o
+  # OficinaMecanica.Execucao, que rodam em outros projetos de Compose, o alcancam por host.docker.internal:5672
+  # (mesmo precedente do JwksUri do Seguranca).
+  rabbitmq:
+    image: rabbitmq:4.4.0-management
+    container_name: oficinamecanica-rabbitmq
+    environment:
+      RABBITMQ_DEFAULT_USER: "${RABBITMQ_DEFAULT_USER:?defina RABBITMQ_DEFAULT_USER no .env}"
+      RABBITMQ_DEFAULT_PASS: "${RABBITMQ_DEFAULT_PASS:?defina RABBITMQ_DEFAULT_PASS no .env}"
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
       retries: 10
       start_period: 30s
     restart: unless-stopped
@@ -196,6 +225,7 @@ services:
 
 volumes:
   sqlserver_data:
+  rabbitmq_data:
   prometheus_data:
   loki_data:
   grafana_data:

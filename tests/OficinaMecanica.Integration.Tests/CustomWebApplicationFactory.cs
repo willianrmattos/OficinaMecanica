@@ -1,12 +1,15 @@
 using System.Security.Cryptography;
 using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Infrastructure.Messaging;
 using OficinaMecanica.Integration.Tests.Fakes;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Tokens;
 
 namespace OficinaMecanica.Integration.Tests;
@@ -34,13 +37,18 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     {
         var dbName = "TestDb_" + Guid.NewGuid();
 
+        // Estes testes rodam sem RabbitMQ e sobre EF InMemory, que nao suporta o outbox transacional: troco o
+        // transporte por memoria e a persistencia por nenhuma. Tem de ser UseSetting (e nao
+        // ConfigureAppConfiguration), porque o Program le a configuracao antes de este factory acrescentar fontes.
+        builder.UseSetting($"{OpcoesDaMensageria.Secao}:{nameof(OpcoesDaMensageria.Transporte)}", nameof(TransporteDaMensageria.EmMemoria));
+        builder.UseSetting($"{OpcoesDaMensageria.Secao}:{nameof(OpcoesDaMensageria.Persistencia)}", nameof(PersistenciaDaMensageria.Nenhuma));
+
         builder.ConfigureServices(services =>
         {
-            var descriptor = services.SingleOrDefault(
-                d => d.ServiceType == typeof(DbContextOptions<AppDbContext>));
-
-            if (descriptor != null)
-                services.Remove(descriptor);
+            // No EF Core 9 o AddDbContext acumula as configuracoes em IDbContextOptionsConfiguration<T>: sem
+            // remover tambem esta, o UseSqlServer do AddInfrastructure continuaria valendo ao lado do InMemory.
+            services.RemoveAll<DbContextOptions<AppDbContext>>();
+            services.RemoveAll<IDbContextOptionsConfiguration<AppDbContext>>();
 
             services.AddDbContext<AppDbContext>(options =>
             {
