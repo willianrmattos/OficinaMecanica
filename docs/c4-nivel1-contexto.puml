@@ -7,14 +7,27 @@ LAYOUT_WITH_LEGEND()
 title OficinaMecanica - Nivel 1: Contexto do Sistema
 
 Person(admin, "Administrador", "Responsavel pela oficina. Gerencia clientes, veiculos, pecas, servicos e ordens de servico via endpoints autenticados com JWT.")
-Person_Ext(cliente, "Cliente Final", "Proprietario do veiculo. Acompanha o status da OS e aprova ou recusa o orcamento via links publicos, sem necessidade de conta.")
+Person(mecanico, "Mecanico", "Opera a fila de execucao: assume diagnostico e reparo, registra apontamentos e finaliza ou inviabiliza o servico.")
+Person_Ext(cliente, "Cliente Final", "Proprietario do veiculo. Acompanha o status da OS, aprova ou recusa o orcamento e paga via links, sem necessidade de conta.")
 
-System(oficina, "OficinaMecanica API", "Sistema backend para gestao de oficina mecanica. Controla o fluxo de Ordens de Servico, estoque de pecas, cadastro de clientes e veiculos.")
+System(oficina, "OS Service (OficinaMecanica)", "Cadastros, ordens de servico e orquestrador da Saga que coordena orcamento, pagamento e execucao.")
+System(billing, "OficinaMecanica.Billing", "Orcamento e pagamento. Integra o Mercado Pago e estorna quando a execucao se mostra inviavel.")
+System(execucao, "OficinaMecanica.Execucao", "Fila de execucao, diagnostico e reparo da oficina.")
 System(seguranca, "OficinaMecanica.Seguranca", "Sistema de autenticacao e autorizacao do ecossistema. Emite tokens JWT (RS256) e expoe a chave publica (JWKS) para validacao.")
+System_Ext(mercadopago, "Mercado Pago", "Gateway de pagamento (Checkout Pro). Notifica o resultado dos pagamentos por webhook assinado.")
 
 Rel(admin, seguranca, "Autentica via", "HTTPS / REST")
+Rel(mecanico, seguranca, "Autentica via", "HTTPS / REST")
 Rel(admin, oficina, "Gerencia via", "HTTPS / REST / JWT Bearer")
+Rel(mecanico, execucao, "Opera a fila via", "HTTPS / REST / JWT Bearer")
 Rel(cliente, oficina, "Consulta status e aprova ou recusa orcamento via", "HTTPS / REST (anonimo)")
-Rel(oficina, cliente, "Notifica mudancas de status da OS via", "E-mail")
+Rel(cliente, mercadopago, "Paga o orcamento aprovado em", "HTTPS (link de pagamento)")
+Rel(oficina, cliente, "Notifica mudancas de status e envia o link de pagamento via", "E-mail")
+Rel(oficina, billing, "Comanda orcamento, pagamento e estorno via", "Mensageria (RabbitMQ)")
+Rel(oficina, execucao, "Comanda diagnostico e execucao via", "Mensageria (RabbitMQ)")
+Rel(billing, oficina, "Responde com eventos de orcamento e pagamento via", "Mensageria (RabbitMQ)")
+Rel(execucao, oficina, "Responde com eventos de diagnostico e execucao via", "Mensageria (RabbitMQ)")
+Rel(billing, mercadopago, "Cria preferencias, consulta pagamentos e estorna via", "HTTPS / REST")
+Rel(mercadopago, billing, "Notifica pagamentos via", "HTTPS / webhook assinado")
 
 @enduml

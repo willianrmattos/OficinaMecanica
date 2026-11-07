@@ -1,0 +1,69 @@
+@startuml saga-maquina-de-estados
+title OficinaMecanica - Saga orquestrada da Ordem de Servico (OS Service)
+
+skinparam state {
+  BackgroundColor<<final>> LightGray
+}
+
+[*] --> AguardandoDiagnostico : OrdemDeServicoAberta\n/ Send SolicitarDiagnostico\n(OS Recebida)
+
+AguardandoDiagnostico --> EmDiagnostico : DiagnosticoIniciado\n(OS EmDiagnostico)
+EmDiagnostico --> GerandoOrcamento : DiagnosticoConcluido\n/ Send GerarOrcamento
+
+GerandoOrcamento --> AguardandoAprovacao : OrcamentoGerado\n(OS AguardandoAprovacao + PrazoId)
+GerandoOrcamento --> Cancelada : OrcamentoNaoGerado | Fault\n(OS Cancelada)
+
+AguardandoAprovacao --> AguardandoPagamento : ClienteAprovouOrcamento\n/ reserva estoque + cria PrazoId do pagamento\n+ Send SolicitarPagamento\n(OS AguardandoPagamento)
+AguardandoAprovacao --> Cancelada : estoque insuficiente\n/ Send CancelarOrcamento
+AguardandoAprovacao --> OrcamentoRecusado : ClienteRecusouOrcamento | PrazoExpirado\n/ Send CancelarOrcamento\n(OS OrcamentoRecusado)
+
+AguardandoPagamento --> AguardandoPagamento : PagamentoSolicitado\n/ grava PagamentoId e link (o PrazoId do pagamento ja nasceu ao enviar SolicitarPagamento)
+AguardandoPagamento --> EmExecucao : PagamentoAprovado\n/ Send IniciarExecucao\n(OS EmExecucao)
+AguardandoPagamento --> CancelandoPagamento : PrazoExpirado\n/ Send CancelarPagamento
+AguardandoPagamento --> Cancelada : PagamentoNaoSolicitado\n/ libera estoque + Send CancelarOrcamento
+
+CancelandoPagamento --> Cancelada : PagamentoCancelado | PagamentoNaoSolicitado\n/ libera estoque\n(OS Cancelada)
+CancelandoPagamento --> EmExecucao : PagamentoAprovado [cancelou por prazo]\n/ Send IniciarExecucao\n(pagamento tardio: segue como pago)
+CancelandoPagamento --> Estornando : PagamentoAprovado [cancelou por CancelamentoSolicitado]\n/ Send EstornarPagamento\n(producao ja cancelada: devolve o dinheiro)
+
+EmExecucao --> Concluida : ExecucaoFinalizada\n(OS Finalizada)
+EmExecucao --> Estornando : ExecucaoInviavel\n/ Send EstornarPagamento
+
+Estornando --> Cancelada : PagamentoEstornado\n/ libera estoque\n(OS Cancelada)
+Estornando --> EstornoPendenteManual : EstornoFalhou\n(alerta; nao vira Cancelada)
+EstornoPendenteManual --> Cancelada : PagamentoEstornado\n(staff refaz o estorno na API do Billing)\n/ libera estoque
+
+AguardandoDiagnostico --> Cancelada : CancelamentoSolicitado\n/ Send CancelarProducao
+EmDiagnostico --> Cancelada : CancelamentoSolicitado\n/ Send CancelarProducao
+GerandoOrcamento --> Cancelada : CancelamentoSolicitado\n/ Send CancelarProducao + CancelarOrcamento
+AguardandoAprovacao --> Cancelada : CancelamentoSolicitado\n/ Send CancelarProducao + CancelarOrcamento
+AguardandoPagamento --> CancelandoPagamento : CancelamentoSolicitado\n/ Send CancelarPagamento + CancelarProducao
+
+Concluida --> [*]
+Cancelada --> [*]
+OrcamentoRecusado --> [*]
+
+note right of EmExecucao
+  Timeout de diagnostico/reparo so gera alerta
+  (evento + metrica); nao estorna sozinho.
+  Entregue continua manual, fora da saga.
+end note
+
+note left of AguardandoDiagnostico
+  Evento que nao tem transicao no estado atual (duplicado, fora de ordem
+  ou tardio) e ignorado: DuringAny(Ignore) + OnMissingInstance(Discard).
+  Nunca vai para a fila de erro nem muda estado.
+end note
+
+note bottom of CancelandoPagamento
+  Estados de compensacao (CancelandoPagamento, Estornando) tem SLA
+  so de alerta (metrica de saga presa); nenhuma decisao automatica
+  se o Billing demorar a responder.
+end note
+
+note bottom of AguardandoAprovacao
+  Prazos (aprovacao e pagamento) ficam em SagaPrazos;
+  o sweeper publica PrazoExpirado{PrazoId} e a saga
+  ignora PrazoId que nao e o vigente.
+end note
+@enduml

@@ -7,14 +7,16 @@ LAYOUT_WITH_LEGEND()
 title OficinaMecanica - Nivel 2: Container
 
 Person(admin, "Administrador", "Usuario autenticado com JWT")
+Person(mecanico, "Mecanico", "Opera a fila de execucao com JWT")
 Person_Ext(cliente, "Cliente Final", "Acesso anonimo a endpoints publicos")
+System_Ext(mercadopago, "Mercado Pago", "Gateway de pagamento (Checkout Pro) - webhook assinado de notificacao")
 System_Ext(smtp, "Servidor SMTP", "Mailpit (dev) - notificacoes de status por e-mail")
 System_Ext(newrelic, "New Relic", "SaaS - APM, infraestrutura, dashboards e alertas")
 
-Container(apim, "Azure API Management", "Consumption tier", "Gateway na frente de todos os backends. Modelo wildcard/passthrough por API - path /oficinaserver pra API (via ingress-nginx), /segurancaserver pro Seguranca (Azure Function, backend publico direto). Sem exigir subscription key (cada backend ja tem seu proprio controle de acesso).")
+Container(apim, "Azure API Management", "Consumption tier", "Gateway na frente de todos os backends. Modelo wildcard/passthrough por API - path /oficinaserver pra API (via ingress-nginx), /billingserver e /execucaoserver pros novos servicos (via ingress-nginx, por prefixo de path), /segurancaserver pro Seguranca (Azure Function, backend publico direto). Sem exigir subscription key (cada backend ja tem seu proprio controle de acesso).")
 
 System_Boundary(oficina, "OficinaMecanica (AKS)") {
-    Container(api, "OficinaMecanica API", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. So VALIDA tokens JWT (RS256/JWKS, emitidos pelo OficinaMecanica.Seguranca) - nao emite mais nenhum. Valida entradas com FluentValidation. Emite traces, metricas (incluindo metricas de negocio customizadas) e logs correlacionados via OpenTelemetry. Escalada de 2 a 5 replicas via HPA.")
+    Container(api, "OS Service (OficinaMecanica API)", ".NET 8 / ASP.NET Core 8", "REST API com Clean Architecture, DDD e CQRS via MediatR. So VALIDA tokens JWT (RS256/JWKS, emitidos pelo OficinaMecanica.Seguranca) - nao emite mais nenhum. Valida entradas com FluentValidation. Emite traces, metricas (incluindo metricas de negocio customizadas) e logs correlacionados via OpenTelemetry. Escalada de 2 a 5 replicas via HPA.")
     ContainerDb(db, "OficinaMecanicaDb", "Azure SQL Database", "Persiste clientes, veiculos, servicos, pecas, ordens de servico e historico de status. Concorrencia otimista com ConcurrencyToken. Tier serverless sempre-gratis.")
 
     Container(otelCollector, "OpenTelemetry Collector", "Deployment", "Recebe traces/metricas/logs via OTLP da API e reexporta pra New Relic. Trocar de backend de observabilidade so exige mudar essa config, nao o codigo da API.")
@@ -26,8 +28,22 @@ System_Boundary(seguranca_sys, "OficinaMecanica.Seguranca (repositorio separado)
     ContainerDb(segurancaDb, "SegurancaDb", "Azure SQL Database", "Persiste usuarios (senha com hash BCrypt). Banco separado, mesmo servidor logico do OficinaMecanicaDb.")
 }
 
+
+System_Boundary(billing_sys, "OficinaMecanica.Billing (repositorio separado, AKS)") {
+    Container(billing, "OficinaMecanica.Billing", ".NET 8 / ASP.NET Core 8", "Orcamento e pagamento. Integra o Mercado Pago (Checkout Pro, webhook com assinatura x-signature, estorno). Outbox/inbox transacionais.")
+    ContainerDb(billingDb, "BillingDb", "Azure SQL Database", "Orcamentos, pagamentos, tentativas, estornos e webhooks recebidos. Usuario SQL dedicado, mesmo servidor logico.")
+}
+
+System_Boundary(execucao_sys, "OficinaMecanica.Execucao (repositorio separado, AKS)") {
+    Container(execucao, "OficinaMecanica.Execucao", ".NET 8 / ASP.NET Core 8", "Fila de execucao, diagnostico, reparo, apontamentos e laudo. Mecanico reivindica itens da fila de forma atomica.")
+    ContainerDb(execucaoDb, "MongoDB Atlas", "MongoDB (SaaS, M0)", "Colecao ordens_producao (documento por OS) e outbox. Usuario Atlas dedicado.")
+}
+
+Container(rabbit, "RabbitMQ", "Container no AKS (namespace messaging)", "Broker de mensageria. Comandos e eventos da Saga entre OS Service, Billing e Execucao (MassTransit 8).")
+
 Rel(admin, apim, "Autentica (login)", "HTTPS / REST")
 Rel(admin, apim, "Chama endpoints administrativos", "HTTPS / REST / JWT Bearer")
+Rel(cliente, mercadopago, "Paga o orcamento aprovado", "HTTPS (link de pagamento)")
 Rel(admin, newrelic, "Visualiza dashboards, logs, traces e alertas", "HTTPS")
 Rel(cliente, apim, "Consulta OS e aprova ou recusa orcamento", "HTTPS / REST (anonimo)")
 Rel(apim, api, "Roteia /oficinaserver via ingress-nginx (backend publico, wildcard passthrough)", "HTTP")
@@ -37,6 +53,21 @@ Rel(seguranca, segurancaDb, "Le e escreve via EF Core", "TCP 1433 / TDS")
 Rel(api, smtp, "Envia notificacao a cada mudanca de status", "SMTP (MailKit)")
 Rel(smtp, cliente, "Entrega notificacao", "E-mail")
 
+Rel(mecanico, apim, "Autentica (login) e opera a fila de execucao", "HTTPS / REST / JWT Bearer")
+Rel(apim, billing, "Roteia /billingserver via ingress-nginx (webhook do Mercado Pago entra aqui)", "HTTP")
+Rel(apim, execucao, "Roteia /execucaoserver via ingress-nginx", "HTTP")
+Rel(billing, billingDb, "Le e escreve via EF Core", "TCP 1433 / TDS")
+Rel(execucao, execucaoDb, "Le e escreve via MongoDB.Driver", "TLS / MongoDB wire")
+Rel(api, execucao, "Consulta detalhada da producao (somente leitura, com timeout/retry/circuit breaker)", "HTTP / REST")
+Rel(billing, seguranca, "Busca JWKS para validar JWT", "HTTPS / REST")
+Rel(execucao, seguranca, "Busca JWKS para validar JWT", "HTTPS / REST")
+Rel(api, rabbit, "Publica comandos e eventos; orquestra a Saga (outbox)", "AMQP")
+Rel(billing, rabbit, "Consome comandos e publica eventos (outbox)", "AMQP")
+Rel(execucao, rabbit, "Consome comandos e publica eventos (outbox)", "AMQP")
+Rel(billing, mercadopago, "Cria preferencia, consulta pagamento e estorna", "HTTPS / REST")
+Rel(mercadopago, apim, "Notifica pagamentos (webhook assinado)", "HTTPS")
+Rel(billing, otelCollector, "Exporta traces, metricas e logs", "OTLP / gRPC")
+Rel(execucao, otelCollector, "Exporta traces, metricas e logs", "OTLP / gRPC")
 Rel(api, otelCollector, "Exporta traces, metricas e logs", "OTLP / gRPC")
 Rel(otelCollector, newrelic, "Reexporta traces, metricas e logs", "OTLP / HTTPS")
 Rel(nriBundle, newrelic, "Envia metricas de CPU/memoria do cluster", "HTTPS")

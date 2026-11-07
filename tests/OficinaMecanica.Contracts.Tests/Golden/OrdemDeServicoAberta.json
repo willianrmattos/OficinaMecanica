@@ -1,0 +1,29 @@
+{
+  "messageId": "00000000-0000-0000-0000-000000000001",
+  "ordemDeServicoId": "00000000-0000-0000-0000-000000000002",
+  "ocorridoEm": "2026-11-07T12:00:00+00:00",
+  "numero": "OS-20261107-ABC123",
+  "clienteId": "00000000-0000-0000-0000-000000000020",
+  "veiculoId": "00000000-0000-0000-0000-000000000021",
+  "placa": "ABC1D23",
+  "marca": "Fiat",
+  "modelo": "Uno",
+  "observacoes": "Barulho no motor",
+  "valorTotal": 192.30,
+  "servicos": [
+    {
+      "servicoId": "00000000-0000-0000-0000-000000000010",
+      "nome": "Troca de \u00F3leo",
+      "precoUnitario": 120.50,
+      "quantidade": 1
+    }
+  ],
+  "pecas": [
+    {
+      "pecaId": "00000000-0000-0000-0000-000000000011",
+      "nome": "Filtro de \u00F3leo",
+      "precoUnitario": 35.90,
+      "quantidade": 2
+    }
+  ]
+}
