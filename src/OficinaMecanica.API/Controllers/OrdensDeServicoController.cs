@@ -1,5 +1,6 @@
 using OficinaMecanica.Application.Commands.AprovarOrcamento;
 using OficinaMecanica.Application.Commands.AtualizarStatusOrdem;
+using OficinaMecanica.Application.Commands.CancelarOrdemDeServico;
 using OficinaMecanica.Application.Commands.CriarOrdemDeServico;
 using OficinaMecanica.Application.Commands.RecusarOrcamento;
 using OficinaMecanica.Application.DTOs;
@@ -60,6 +61,7 @@ public class OrdensDeServicoController : ControllerBase
         return Ok(resultado);
     }
 
+    // Só a entrega é manual: diagnóstico, orçamento, pagamento e execução avançam pelo fluxo automático.
     [HttpPatch("{id:guid}/status")]
     [ProducesResponseType(StatusCodes.Status204NoContent)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
@@ -69,24 +71,40 @@ public class OrdensDeServicoController : ControllerBase
         return NoContent();
     }
 
+    // 202: a decisão do cliente é publicada para o fluxo automático, que a processa de forma assíncrona.
+    // O corpo traz o status atual da OS (ainda 'AguardandoAprovacao') e o número, para acompanhar pela consulta pública.
     [HttpPost("{id:guid}/aprovar")]
     [AllowAnonymous]
-    [ProducesResponseType(typeof(OrdemDeServicoDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(SolicitacaoAceitaDto), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> AprovarOrcamento(Guid id)
     {
         var resultado = await _mediator.Send(new AprovarOrcamentoCommand(id));
-        return Ok(resultado);
+        return Accepted(resultado);
     }
 
     [HttpPost("{id:guid}/recusar")]
     [AllowAnonymous]
-    [ProducesResponseType(typeof(OrdemDeServicoDto), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(SolicitacaoAceitaDto), StatusCodes.Status202Accepted)]
     [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
     public async Task<IActionResult> RecusarOrcamento(Guid id, [FromBody] RecusarOrcamentoRequest? request)
     {
         var resultado = await _mediator.Send(new RecusarOrcamentoCommand(id, request?.Motivo));
-        return Ok(resultado);
+        return Accepted(resultado);
+    }
+
+    // Cancelamento do atendimento antes da execução: o fluxo automático desfaz o que já existir (orçamento, pagamento, estoque).
+    [HttpPost("{id:guid}/cancelar")]
+    [ProducesResponseType(typeof(SolicitacaoAceitaDto), StatusCodes.Status202Accepted)]
+    [ProducesResponseType(StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(StatusCodes.Status401Unauthorized)]
+    [ProducesResponseType(StatusCodes.Status409Conflict)]
+    public async Task<IActionResult> Cancelar(Guid id, [FromBody] CancelarOrdemDeServicoRequest request)
+    {
+        var resultado = await _mediator.Send(new CancelarOrdemDeServicoCommand(id, request.Motivo));
+        return Accepted(resultado);
     }
 
     [HttpGet("tempo-medio")]
@@ -100,3 +118,4 @@ public class OrdensDeServicoController : ControllerBase
 
 public record AtualizarStatusRequest(int NovoStatus);
 public record RecusarOrcamentoRequest(string? Motivo);
+public record CancelarOrdemDeServicoRequest(string Motivo);

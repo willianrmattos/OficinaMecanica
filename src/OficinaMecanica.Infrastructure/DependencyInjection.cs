@@ -7,6 +7,7 @@ using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.IdentityModel.Protocols;
 using Microsoft.IdentityModel.Tokens;
 
@@ -41,6 +42,9 @@ public static class DependencyInjection
 
         // Email Service
         services.AddScoped<IEmailService, SmtpEmailService>();
+
+        // Relogio injetavel: os handlers carimbam as mensagens de integracao e os testes precisam fixar a hora
+        services.TryAddSingleton(TimeProvider.System);
 
         // JWT Authentication - so valida tokens RS256 emitidos pelo OficinaMecanica.Seguranca,
         // buscando a chave publica dinamicamente via JWKS (nao emite mais token aqui)

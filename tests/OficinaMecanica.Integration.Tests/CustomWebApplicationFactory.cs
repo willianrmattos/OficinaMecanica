@@ -1,6 +1,7 @@
 using System.Security.Cryptography;
 using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Integration.Tests.Fakes;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Mvc.Testing;
@@ -23,6 +24,11 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
     // do compartilhamento - eliminado ao dar uma chave propria (e descartada junto) pra cada factory.
     public RSA TestSigningKey { get; } = RSA.Create(2048);
     public const string TestKid = "test-kid";
+
+    // O publicador real (outbox do MassTransit) so entra junto com a saga: aqui as mensagens de integracao
+    // ficam capturadas para os testes verificarem o que cada endpoint publicou. Uma instancia por factory,
+    // pelo mesmo motivo da chave RSA: as classes de teste rodam em paralelo.
+    public FakeIntegrationEventPublisher Publicador { get; } = new();
 
     protected override void ConfigureWebHost(IWebHostBuilder builder)
     {
@@ -53,6 +59,8 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
                 services.Remove(emailServiceDescriptor);
 
             services.AddScoped<IEmailService, FakeEmailService>();
+
+            services.AddSingleton<IIntegrationEventPublisher>(Publicador);
 
             // Sobrescreve so a resolucao da chave de assinatura (pra chave de teste fixa acima),
             // depois da configuracao real do AddJwtBearer - Issuer/Audience continuam vindo do appsettings.json real

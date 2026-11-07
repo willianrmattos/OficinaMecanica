@@ -7,6 +7,11 @@ namespace OficinaMecanica.Domain.Entities;
 
 public class OrdemDeServico : AggregateRoot
 {
+    // O motivo tambem vai para HistoricoStatus.Observacao (500 caracteres, junto do prefixo da frase),
+    // entao o limite do motivo precisa deixar folga para ele.
+    public const int TamanhoMaximoDoMotivo = 400;
+    public const int TamanhoMaximoDoLinkDePagamento = 2000;
+
     public string Numero { get; private set; }
     public Guid ClienteId { get; private set; }
     public Guid VeiculoId { get; private set; }
@@ -15,6 +20,23 @@ public class OrdemDeServico : AggregateRoot
     public string? Observacoes { get; private set; }
     public DateTime DataAbertura { get; private set; }
     public DateTime? DataConclusao { get; private set; }
+
+    // OS anteriores a saga ficam false (default da coluna): so as criadas por este construtor participam
+    // dela, e e isso que separa uma decisao aceita de um 409 em aprovar/recusar/cancelar.
+    public bool ParticipaDaSaga { get; private set; }
+    public bool EstoqueReservado { get; private set; }
+    public Guid? PagamentoId { get; private set; }
+    public string? LinkPagamento { get; private set; }
+    public DateTimeOffset? PagamentoExpiraEm { get; private set; }
+    public string? MotivoCancelamento { get; private set; }
+
+    public bool AguardaDecisaoDoCliente => Status == StatusOrdemDeServico.AguardandoAprovacao;
+
+    public bool PodeSerCanceladaAntesDaExecucao =>
+        Status is StatusOrdemDeServico.Recebida
+            or StatusOrdemDeServico.EmDiagnostico
+            or StatusOrdemDeServico.AguardandoAprovacao
+            or StatusOrdemDeServico.AguardandoPagamento;
 
     private readonly List<ItemServico> _itensServico = new();
     public IReadOnlyCollection<ItemServico> ItensServico => _itensServico.AsReadOnly();
@@ -36,6 +58,7 @@ public class OrdemDeServico : AggregateRoot
         Observacoes = observacoes;
         DataAbertura = DateTime.UtcNow;
         ValorTotal = 0;
+        ParticipaDaSaga = true;
 
         _historicoStatus.Add(new HistoricoStatus(Id, StatusOrdemDeServico.Recebida, "Ordem de serviço criada."));
         AddDomainEvent(new OrdemDeServicoCriadaEvent(Id, Numero, clienteId));
@@ -96,8 +119,8 @@ public class OrdemDeServico : AggregateRoot
 
     public void AprovarOrcamento()
     {
-        ValidarTransicao(StatusOrdemDeServico.EmExecucao);
-        AlterarStatus(StatusOrdemDeServico.EmExecucao, "Orçamento aprovado pelo cliente. Serviço em execução.");
+        ValidarTransicao(StatusOrdemDeServico.AguardandoPagamento);
+        AlterarStatus(StatusOrdemDeServico.AguardandoPagamento, "Orçamento aprovado pelo cliente. Aguardando pagamento.");
         AddDomainEvent(new OrcamentoAprovadoEvent(Id, Numero));
     }
 
@@ -109,6 +132,12 @@ public class OrdemDeServico : AggregateRoot
             : $"Orçamento recusado pelo cliente. Motivo: {motivo}";
         AlterarStatus(StatusOrdemDeServico.OrcamentoRecusado, observacao);
         AddDomainEvent(new OrcamentoRecusadoEvent(Id, Numero, motivo));
+    }
+
+    public void IniciarExecucao()
+    {
+        ValidarTransicao(StatusOrdemDeServico.EmExecucao);
+        AlterarStatus(StatusOrdemDeServico.EmExecucao, "Pagamento confirmado. Serviço em execução.");
     }
 
     public void Finalizar()
@@ -124,6 +153,77 @@ public class OrdemDeServico : AggregateRoot
         AlterarStatus(StatusOrdemDeServico.Entregue, "Veículo entregue ao cliente.");
     }
 
+    public void RegistrarPagamentoSolicitado(Guid pagamentoId, string linkPagamento, DateTimeOffset expiraEm)
+    {
+        if (pagamentoId == Guid.Empty)
+            throw new DomainException("O identificador do pagamento é obrigatório.");
+        if (string.IsNullOrWhiteSpace(linkPagamento))
+            throw new DomainException("O link de pagamento é obrigatório.");
+        if (linkPagamento.Length > TamanhoMaximoDoLinkDePagamento)
+            throw new DomainException($"O link de pagamento deve ter no máximo {TamanhoMaximoDoLinkDePagamento} caracteres.");
+
+        // Reentrega da mesma mensagem: ja registrado, mesmo que a OS tenha avancado de status desde entao.
+        if (PagamentoId == pagamentoId)
+            return;
+
+        if (Status != StatusOrdemDeServico.AguardandoPagamento)
+            throw new DomainException($"Só é possível registrar o pagamento quando a OS está em 'AguardandoPagamento'. Status atual: '{Status}'.");
+        if (PagamentoId is not null)
+            throw new DomainException("A OS já possui outro pagamento registrado.");
+
+        PagamentoId = pagamentoId;
+        LinkPagamento = linkPagamento;
+        PagamentoExpiraEm = expiraEm;
+        AddDomainEvent(new PagamentoSolicitadoEvent(Id, Numero, ClienteId, linkPagamento, expiraEm));
+    }
+
+    // Separado de ReservarEstoque para a Application poder checar o status antes de olhar o estoque das pecas,
+    // sem alterar nada na OS.
+    public void ValidarPodeReservarEstoque()
+    {
+        if (Status is not (StatusOrdemDeServico.AguardandoAprovacao or StatusOrdemDeServico.AguardandoPagamento))
+            throw new DomainException("Só é possível reservar o estoque quando a OS está em 'AguardandoAprovacao' ou 'AguardandoPagamento'.");
+    }
+
+    // So marca o flag: a movimentacao real do estoque e da Application, que enxerga as pecas.
+    public void ReservarEstoque()
+    {
+        if (EstoqueReservado)
+            return;
+
+        ValidarPodeReservarEstoque();
+        EstoqueReservado = true;
+    }
+
+    public void LiberarEstoque() => EstoqueReservado = false;
+
+    public void Cancelar(string motivo)
+    {
+        if (Status == StatusOrdemDeServico.Cancelada)
+            return;
+
+        if (string.IsNullOrWhiteSpace(motivo))
+            throw new DomainException("O motivo do cancelamento é obrigatório.");
+
+        motivo = motivo.Trim();
+        if (motivo.Length > TamanhoMaximoDoMotivo)
+            throw new DomainException($"O motivo do cancelamento deve ter no máximo {TamanhoMaximoDoMotivo} caracteres.");
+
+        ValidarTransicao(StatusOrdemDeServico.Cancelada);
+        MotivoCancelamento = motivo;
+        AlterarStatus(StatusOrdemDeServico.Cancelada, $"Ordem de serviço cancelada. Motivo: {motivo}");
+    }
+
+    // Um comando repetido ou atrasado nao pode falhar quando a OS ja chegou ao status alvo (ou passou dele
+    // no caminho principal): e isso que torna idempotentes os comandos que a saga reenvia.
+    // Cancelada e OrcamentoRecusado ficam fora do caminho, entao nunca contam como "ja alcancou".
+    public bool JaAlcancou(StatusOrdemDeServico alvo)
+    {
+        var posicaoAtual = Array.IndexOf(CaminhoPrincipal, Status);
+        var posicaoAlvo = Array.IndexOf(CaminhoPrincipal, alvo);
+        return posicaoAtual >= 0 && posicaoAlvo >= 0 && posicaoAtual >= posicaoAlvo;
+    }
+
     private void AlterarStatus(StatusOrdemDeServico novoStatus, string observacao)
     {
         Status = novoStatus;
@@ -131,12 +231,25 @@ public class OrdemDeServico : AggregateRoot
         AddDomainEvent(new StatusOrdemAlteradoEvent(Id, Numero, novoStatus));
     }
 
+    private static readonly StatusOrdemDeServico[] CaminhoPrincipal =
+    {
+        StatusOrdemDeServico.Recebida,
+        StatusOrdemDeServico.EmDiagnostico,
+        StatusOrdemDeServico.AguardandoAprovacao,
+        StatusOrdemDeServico.AguardandoPagamento,
+        StatusOrdemDeServico.EmExecucao,
+        StatusOrdemDeServico.Finalizada,
+        StatusOrdemDeServico.Entregue
+    };
+
     private static readonly Dictionary<StatusOrdemDeServico, StatusOrdemDeServico[]> TransicoesPermitidas = new()
     {
-        { StatusOrdemDeServico.Recebida, new[] { StatusOrdemDeServico.EmDiagnostico } },
-        { StatusOrdemDeServico.EmDiagnostico, new[] { StatusOrdemDeServico.AguardandoAprovacao } },
-        { StatusOrdemDeServico.AguardandoAprovacao, new[] { StatusOrdemDeServico.EmExecucao, StatusOrdemDeServico.OrcamentoRecusado } },
-        { StatusOrdemDeServico.EmExecucao, new[] { StatusOrdemDeServico.Finalizada } },
+        { StatusOrdemDeServico.Recebida, new[] { StatusOrdemDeServico.EmDiagnostico, StatusOrdemDeServico.Cancelada } },
+        { StatusOrdemDeServico.EmDiagnostico, new[] { StatusOrdemDeServico.AguardandoAprovacao, StatusOrdemDeServico.Cancelada } },
+        { StatusOrdemDeServico.AguardandoAprovacao, new[] { StatusOrdemDeServico.AguardandoPagamento, StatusOrdemDeServico.OrcamentoRecusado, StatusOrdemDeServico.Cancelada } },
+        { StatusOrdemDeServico.AguardandoPagamento, new[] { StatusOrdemDeServico.EmExecucao, StatusOrdemDeServico.Cancelada } },
+        // EmExecucao -> Cancelada so existe como compensacao (execucao inviavel, estorno): nenhuma rota HTTP chega aqui.
+        { StatusOrdemDeServico.EmExecucao, new[] { StatusOrdemDeServico.Finalizada, StatusOrdemDeServico.Cancelada } },
         { StatusOrdemDeServico.Finalizada, new[] { StatusOrdemDeServico.Entregue } },
     };
 

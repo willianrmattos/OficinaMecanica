@@ -12,6 +12,7 @@ public class ExceptionHandlingMiddleware
         public const string Negocio = "Erro de Negócio";
         public const string Validacao = "Erro de Validação";
         public const string NaoEncontrado = "Não Encontrado";
+        public const string Conflito = "Conflito";
         public const string Interno = "Erro Interno";
     }
 
@@ -50,6 +51,13 @@ public class ExceptionHandlingMiddleware
                 errorResponse.Mensagem = domainEx.Message;
                 errorResponse.Tipo = TipoErro.Negocio;
                 _logger.LogWarning("Erro de domínio: {Message}", domainEx.Message);
+                break;
+
+            case ConflitoException conflitoEx:
+                response.StatusCode = (int)HttpStatusCode.Conflict;
+                errorResponse.Mensagem = conflitoEx.Message;
+                errorResponse.Tipo = TipoErro.Conflito;
+                _logger.LogWarning("Conflito de estado: {Message}", conflitoEx.Message);
                 break;
 
             case ValidationException validationEx:

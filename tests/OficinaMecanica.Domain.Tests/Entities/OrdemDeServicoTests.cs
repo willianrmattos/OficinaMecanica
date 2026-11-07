@@ -15,6 +15,12 @@ public class OrdemDeServicoTests
         ordem.Numero.Should().StartWith("OS-");
         ordem.HistoricoStatus.Should().HaveCount(1);
         ordem.DomainEvents.Should().HaveCount(1);
+        ordem.ParticipaDaSaga.Should().BeTrue();
+        ordem.EstoqueReservado.Should().BeFalse();
+        ordem.PagamentoId.Should().BeNull();
+        ordem.LinkPagamento.Should().BeNull();
+        ordem.PagamentoExpiraEm.Should().BeNull();
+        ordem.MotivoCancelamento.Should().BeNull();
     }
 
     [Fact]
@@ -46,7 +52,14 @@ public class OrdemDeServicoTests
 
         ordem.Status.Should().Be(StatusOrdemDeServico.Entregue);
         ordem.DataConclusao.Should().NotBeNull();
-        ordem.HistoricoStatus.Should().HaveCount(6);
+        ordem.HistoricoStatus.Select(h => h.Status).Should().Equal(
+            StatusOrdemDeServico.Recebida,
+            StatusOrdemDeServico.EmDiagnostico,
+            StatusOrdemDeServico.AguardandoAprovacao,
+            StatusOrdemDeServico.AguardandoPagamento,
+            StatusOrdemDeServico.EmExecucao,
+            StatusOrdemDeServico.Finalizada,
+            StatusOrdemDeServico.Entregue);
     }
 
     [Fact]

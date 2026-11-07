@@ -79,12 +79,22 @@ dotnet add <projeto> package <pacote> --source https://api.nuget.org/v3/index.js
 ## Fluxo da Ordem de Servico
 
 ```
-Recebida -> EmDiagnostico -> AguardandoAprovacao -> EmExecucao -> Finalizada -> Entregue
-                                    |
-                                    +-> OrcamentoRecusado
+Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExecucao -> Finalizada -> Entregue
+                                    |                       |
+                                    +-> OrcamentoRecusado   +-> Cancelada
 ```
 
-Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, da baixa automatica no estoque das pecas. Ao recusar (`RecusarOrcamento(motivo)`, sem baixa de estoque), a OS vai para `OrcamentoRecusado` — valor `0` no enum `StatusOrdemDeServico` (nao o proximo numero livre) de proposito, pra ordenar abaixo de `Recebida` na listagem padrao sem precisar de mapeamento de prioridade customizado (ver secao "Listagem de Ordens de Servico").
+`Cancelada` tambem sai de `Recebida`, `EmDiagnostico` e `AguardandoAprovacao`; de `EmExecucao` so como compensacao (execucao inviavel/estorno). Transicoes controladas pelo dominio (`OrdemDeServico.cs`, dicionario `TransicoesPermitidas`). Fluxo completo da saga: `docs/saga-maquina-de-estados.puml`, decisoes em `docs/adr/0003|0006` e `docs/rfc/0005`.
+
+- **Enum persistido como int, nunca renumerar**: `OrcamentoRecusado=0 ... Entregue=6`, `AguardandoPagamento=7`, `Cancelada=8`. Por isso a listagem nao ordena mais pelo numero (ver abaixo).
+- **Aprovar orcamento** (`AprovarOrcamento()`) vai pra `AguardandoPagamento` e **nao da mais baixa no estoque**. `IniciarExecucao()` leva `AguardandoPagamento -> EmExecucao`. Criar OS so *valida* estoque; a reserva acontece depois, na aprovacao.
+- **Campos novos da OS**: `ParticipaDaSaga` (true no construtor; OS antigas ficam false pelo default da coluna e respondem 409 em aprovar/recusar/cancelar), `EstoqueReservado`, `PagamentoId`, `LinkPagamento`, `PagamentoExpiraEm`, `MotivoCancelamento`. `Cancelar(motivo)`, `RegistrarPagamentoSolicitado`, `ReservarEstoque`/`LiberarEstoque` (so o flag) sao idempotentes; `JaAlcancou(status)` e o que torna os commands internos no-op em reentrega.
+- **Mensagens de integracao** (`OficinaMecanica.Contracts.*`): publicadas so pelo handler via `IIntegrationEventPublisher` (`Application/Interfaces`), **antes** do `SaveChangesAsync` (e ele que grava o outbox, mesmo sem mudar agregado). Nenhuma implementacao real registrada ainda (F3, MassTransit); os testes de integracao usam um fake no `CustomWebApplicationFactory`. `TimeProvider.System` esta registrado na Infrastructure; `MessageId` = `Guid.NewGuid()`, `OcorridoEm` = `TimeProvider.GetUtcNow()`.
+- **Commands HTTP so publicam, nao mudam status**: `AprovarOrcamento`/`RecusarOrcamento`/`CancelarOrdemDeServico` validam (OS existe -> `ParticipaDaSaga` -> status; `ConflitoException` -> 409) e publicam `ClienteAprovouOrcamento`/`ClienteRecusouOrcamento`/`CancelamentoSolicitado`. Quem muda o status e a saga (F3) chamando os **commands internos idempotentes**: `MarcarDiagnosticoIniciado`, `RegistrarOrcamentoGerado`, `ReservarEstoque` (tudo-ou-nada, devolve `ResultadoDaReservaDeEstoque`), `LiberarEstoque`, `AplicarAprovacaoDoOrcamento`, `AplicarRecusaDoOrcamento`, `RegistrarPagamentoSolicitado`, `IniciarExecucaoDaOrdem`, `FinalizarOrdem`, `CancelarOrdemPelaSaga` (nao rejeita motivo: vazio vira texto padrao e acima de 400 e truncado; so o HTTP `CancelarOrdemDeServico` exige e limita). Eles nao publicam nada e chamam `SaveChangesAsync`. Nao-encontrado continua `DomainException` (400), como no resto do repo.
+- **Retry da saga (F3)**: o retry do MassTransit deve ter `r.Ignore<ConflitoException>()`, `r.Ignore<DomainException>()` e `r.Ignore<ValidationException>()` (do FluentValidation; regra de negocio violada ou validacao reprovada nao se resolvem repetindo).
+- **E-mail**: `StatusOrdemAlteradoEventHandler` segue cobrindo toda transicao (`AguardandoPagamento` avisa que o link vem em seguida); `PagamentoSolicitadoEventHandler` manda o link + prazo (horario de Brasilia, offset fixo -03:00).
+- **Listagem**: ordem por `CASE` explicito em `OrdemDeServicoRepository` (`EmExecucao > AguardandoPagamento > AguardandoAprovacao > EmDiagnostico > Recebida > OrcamentoRecusado = Cancelada`), substitui o `OrderByDescending(Status)` descrito na secao "Listagem de Ordens de Servico" abaixo.
+- **Migration**: as colunas novas estao nas EF Configurations mas ainda **nao ha migration** (sai na F3, junto do upgrade do EF Core); `dotnet run` em Development contra SQL Server so funciona depois disso.
 
 ## Autenticacao
 
@@ -123,7 +133,8 @@ Transicoes controladas pelo dominio (OrdemDeServico.cs). Ao aprovar orcamento, d
   acontecer testando local, o fix e reiniciar o container `api` do
   monolito (`docker compose restart api`) pra forcar um fetch novo do JWKS
   atual, depois gerar um token novo no Seguranca.
-- Endpoints publicos: consulta OS por numero (`/api/ordens-de-servico/numero/{numero}`), aprovacao (`/api/ordens-de-servico/{id}/aprovar`) e recusa de orcamento (`/api/ordens-de-servico/{id}/recusar`)
+- Endpoints publicos: consulta OS por numero (`/api/ordens-de-servico/numero/{numero}`, agora com `linkPagamento`/`pagamentoExpiraEm` quando houver), aprovacao (`/api/ordens-de-servico/{id}/aprovar`) e recusa de orcamento (`/api/ordens-de-servico/{id}/recusar`)
+- **Quebras de API (ADR 0006)**: aprovar/recusar respondem **202 Accepted** com `{ ordemDeServicoId, numero, status }` (status ainda `AguardandoAprovacao`: a decisao so foi publicada pra saga) em vez de 200 + DTO; **409** se a OS e anterior a saga (`ParticipaDaSaga=false`) ou nao esta em `AguardandoAprovacao`. `PATCH /api/ordens-de-servico/{id}/status` so aceita `Entregue` (validator; os demais status dao 400). Novo `POST /api/ordens-de-servico/{id}/cancelar` (JWT, corpo `{ "motivo": "..." }` obrigatorio, 202; 409 se OS pre-saga ou de `EmExecucao` em diante)
 - `/health` e `/metrics` tambem sao anonimos (nao passam por `[Authorize]`, mapeados via `MapHealthChecks`/`MapMetrics` fora do `MapControllers()`) — ver secao "Observabilidade"
 - Demais endpoints exigem token JWT
 - Testes de integracao (`CustomWebApplicationFactory.cs`) nao dependem do

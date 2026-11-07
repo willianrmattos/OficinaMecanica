@@ -7,6 +7,7 @@ WORKDIR /src
 
 COPY nuget.config ./
 COPY OficinaMecanica.sln ./
+COPY src/OficinaMecanica.Contracts/OficinaMecanica.Contracts.csproj src/OficinaMecanica.Contracts/
 COPY src/OficinaMecanica.Domain/OficinaMecanica.Domain.csproj src/OficinaMecanica.Domain/
 COPY src/OficinaMecanica.Application/OficinaMecanica.Application.csproj src/OficinaMecanica.Application/
 COPY src/OficinaMecanica.Infrastructure/OficinaMecanica.Infrastructure.csproj src/OficinaMecanica.Infrastructure/

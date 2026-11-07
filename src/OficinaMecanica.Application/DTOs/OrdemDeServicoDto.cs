@@ -12,6 +12,8 @@ public record OrdemDeServicoDto(
     string? Observacoes,
     DateTime DataAbertura,
     DateTime? DataConclusao,
+    string? LinkPagamento,
+    DateTimeOffset? PagamentoExpiraEm,
     IEnumerable<ItemServicoDto> ItensServico,
     IEnumerable<ItemPecaDto> ItensPeca,
     IEnumerable<HistoricoStatusDto> HistoricoStatus

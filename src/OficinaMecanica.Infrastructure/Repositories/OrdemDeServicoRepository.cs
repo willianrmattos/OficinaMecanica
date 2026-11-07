@@ -3,6 +3,7 @@ using OficinaMecanica.Domain.Enums;
 using OficinaMecanica.Domain.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
 using Microsoft.EntityFrameworkCore;
+using System.Linq.Expressions;
 
 namespace OficinaMecanica.Infrastructure.Repositories;
 
@@ -15,6 +16,18 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
         StatusOrdemDeServico.Finalizada,
         StatusOrdemDeServico.Entregue
     };
+
+    // Prioridade explicita em vez de ordenar pelo valor do enum: os valores numericos nao podem ser
+    // renumerados (estao persistidos e viajam em mensagens), entao AguardandoPagamento (7) e Cancelada (8)
+    // nao ficam no lugar certo se a ordem vier do numero. Uma cadeia de condicionais vira CASE no SQL Server
+    // e tambem roda no provider InMemory dos testes. OrcamentoRecusado e Cancelada empatam no fim.
+    private static readonly Expression<Func<OrdemDeServico, int>> PrioridadeDoStatus = o =>
+        o.Status == StatusOrdemDeServico.EmExecucao ? 5
+        : o.Status == StatusOrdemDeServico.AguardandoPagamento ? 4
+        : o.Status == StatusOrdemDeServico.AguardandoAprovacao ? 3
+        : o.Status == StatusOrdemDeServico.EmDiagnostico ? 2
+        : o.Status == StatusOrdemDeServico.Recebida ? 1
+        : 0;
 
     public OrdemDeServicoRepository(AppDbContext context)
     {
@@ -58,7 +71,7 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
         query = AplicarFiltroStatus(query, filtroStatus);
 
         return await query
-            .OrderByDescending(o => o.Status)
+            .OrderByDescending(PrioridadeDoStatus)
             .ThenBy(o => o.DataAbertura)
             .Skip((pagina - 1) * tamanhoPagina)
             .Take(tamanhoPagina)
