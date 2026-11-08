@@ -579,6 +579,110 @@
         }
       }
     },
+    "/api/ordens-de-servico/{id}/execucao": {
+      "get": {
+        "tags": [
+          "OrdensDeServico"
+        ],
+        "summary": "Consulta detalhada da execução (produção) de uma ordem de serviço.",
+        "description": "Somente leitura. O OS Service pergunta à Execução, repassando o token do chamador, e devolve o detalhe com `origem = \"execucao\"`.\nSe a Execução estiver indisponível (timeout, circuito aberto, erro 5xx) ou ainda não tiver a ordem enfileirada (404 dela),\na resposta continua sendo 200, com `origem = \"saga\"`: só o status da ordem e o último estado conhecido da saga, sem\nnenhum dado da produção (`producao` nulo). `motivoDoFallback` diz qual dos dois casos ocorreu.",
+        "operationId": "OrdensDeServico_ObterExecucao",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Id da ordem de serviço.",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Detalhe da execução (origem `execucao`) ou último estado conhecido da saga (origem `saga`).",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecucaoDaOrdemDto"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecucaoDaOrdemDto"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExecucaoDaOrdemDto"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Id da ordem de serviço inválido.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Token ausente ou inválido.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "A ordem de serviço não existe.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              },
+              "text/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProblemDetails"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/ordens-de-servico/numero/{numero}": {
       "get": {
         "tags": [
@@ -2159,6 +2263,24 @@
         },
         "additionalProperties": false
       },
+      "ApontamentoDaProducaoDto": {
+        "type": "object",
+        "properties": {
+          "mecanicoId": {
+            "type": "string",
+            "nullable": true
+          },
+          "texto": {
+            "type": "string",
+            "nullable": true
+          },
+          "em": {
+            "type": "string",
+            "format": "date-time"
+          }
+        },
+        "additionalProperties": false
+      },
       "AtualizarClienteRequest": {
         "type": "object",
         "properties": {
@@ -2465,6 +2587,71 @@
         },
         "additionalProperties": false
       },
+      "EtapaDaProducaoDto": {
+        "type": "object",
+        "properties": {
+          "nome": {
+            "type": "string",
+            "nullable": true
+          },
+          "mecanicoId": {
+            "type": "string",
+            "nullable": true
+          },
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "inicio": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "fim": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
+      },
+      "ExecucaoDaOrdemDto": {
+        "type": "object",
+        "properties": {
+          "ordemDeServicoId": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "numero": {
+            "type": "string",
+            "nullable": true
+          },
+          "origem": {
+            "type": "string",
+            "nullable": true
+          },
+          "statusDaOrdem": {
+            "type": "string",
+            "nullable": true
+          },
+          "estadoDaSaga": {
+            "type": "string",
+            "nullable": true
+          },
+          "estadoDaSagaAtualizadoEm": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "motivoDoFallback": {
+            "type": "string",
+            "nullable": true
+          },
+          "producao": {
+            "$ref": "#/components/schemas/ProducaoDaOrdemDto"
+          }
+        },
+        "additionalProperties": false
+      },
       "HistoricoStatusDto": {
         "type": "object",
         "properties": {
@@ -2571,6 +2758,21 @@
           "quantidade": {
             "type": "integer",
             "format": "int32"
+          }
+        },
+        "additionalProperties": false
+      },
+      "LaudoDaProducaoDto": {
+        "type": "object",
+        "properties": {
+          "texto": {
+            "type": "string",
+            "nullable": true
+          },
+          "horasEstimadas": {
+            "type": "number",
+            "format": "double",
+            "nullable": true
           }
         },
         "additionalProperties": false
@@ -2780,6 +2982,58 @@
           }
         },
         "additionalProperties": { }
+      },
+      "ProducaoDaOrdemDto": {
+        "type": "object",
+        "properties": {
+          "status": {
+            "type": "string",
+            "nullable": true
+          },
+          "mecanicoId": {
+            "type": "string",
+            "nullable": true
+          },
+          "laudo": {
+            "$ref": "#/components/schemas/LaudoDaProducaoDto"
+          },
+          "resumo": {
+            "type": "string",
+            "nullable": true
+          },
+          "motivoInviabilidade": {
+            "type": "string",
+            "nullable": true
+          },
+          "motivoCancelamento": {
+            "type": "string",
+            "nullable": true
+          },
+          "enfileiradaEm": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "liberadaEm": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "etapas": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/EtapaDaProducaoDto"
+            },
+            "nullable": true
+          },
+          "apontamentos": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ApontamentoDaProducaoDto"
+            },
+            "nullable": true
+          }
+        },
+        "additionalProperties": false
       },
       "RecusarOrcamentoRequest": {
         "type": "object",

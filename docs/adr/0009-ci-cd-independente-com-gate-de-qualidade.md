@@ -73,8 +73,8 @@ os MESMOS projetos de `tests/*.Tests` (com `Category!=Infra` e `Category=Infra`)
 chamada do gate apagada, o gate lendo o numero bruto, cada filtro de exclusao removido, `-strict` retirado, falha do
 kubeconform ignorada, so a primeira pasta validada...). Os casos que dependem do Docker (kubeconform) sao pulados com aviso
 quando ele nao esta ligado. Na ultima execucao completa foram 78 casos e 38 mutantes detectados; na mesma execucao
-(`ci-local.sh`, 9 min 13 s) foram 926 testes (Contracts 71, Domain 145, Application 287, Integration 97, Infrastructure 326, dos quais 59
-`Category=Infra`) e cobertura de linhas de 95,7% bruta (5840/6098) e 93,9% com as exclusoes (2957/3149).
+(`ci-local.sh`, com o BDD ja nas fases de teste) foram 1054 testes (Contracts 71, Domain 145, Application 298, Integration 112,
+Infrastructure 416, dos quais 62 `Category=Infra`, e Bdd 12) e cobertura de linhas de 96,3% bruta (6225/6460) e 95,2% com as exclusoes (3336/3504).
 
 **SonarCloud com Quality Gate bloqueante.** O job `quality` baixa o OpenCover do job anterior (artifact), roda
 `dotnet-sonarscanner begin/build/end` e usa `sonar.qualitygate.wait=true`: se o Quality Gate reprova, o job falha. Projeto e

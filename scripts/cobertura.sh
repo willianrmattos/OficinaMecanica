@@ -48,6 +48,7 @@ PROJETOS_DE_TESTE=(
   "application:tests/OficinaMecanica.Application.Tests"
   "integracao:tests/OficinaMecanica.Integration.Tests"
   "infraestrutura:tests/OficinaMecanica.Infrastructure.Tests"
+  "bdd:tests/OficinaMecanica.Bdd.Tests"
 )
 
 # rodar_fase <filtro> <prefixo-do-resultado>
