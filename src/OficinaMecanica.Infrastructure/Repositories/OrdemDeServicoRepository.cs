@@ -125,7 +125,8 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
             .GroupBy(h => h.OrdemDeServicoId)
             .SelectMany(porOrdem =>
             {
-                var ordenado = porOrdem.OrderBy(h => h.DataAlteracao).ToList();
+                // Mesmo desempate do historico do agregado: duas mudancas no mesmo instante seguem a ordem do fluxo.
+                var ordenado = porOrdem.OrderBy(h => h.DataAlteracao).ThenBy(h => OrdemDeServico.PosicaoNoFluxo(h.Status)).ToList();
                 return ordenado
                     .Zip(ordenado.Skip(1), (atual, proximo) => new
                     {

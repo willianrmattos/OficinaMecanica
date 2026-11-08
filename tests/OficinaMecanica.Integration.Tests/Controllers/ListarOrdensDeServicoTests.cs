@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using OficinaMecanica.Domain.Entities;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Integration.Tests.Support;
 
 namespace OficinaMecanica.Integration.Tests.Controllers;
 
@@ -134,6 +135,26 @@ public class ListarOrdensDeServicoTests : IClassFixture<CustomWebApplicationFact
         // sem uma das duas classes ficar sempre acima da outra.
         idsNaOrdemRetornada.Where(semeadas.Contains).Should().Equal(semeadas);
         idsNaOrdemRetornada.Should().NotContain(finalizada.Id);
+    }
+
+    [Fact]
+    public async Task Listar_HistoricoGravadoForaDeOrdem_DeveRetornarCadaOrdemComOHistoricoEmOrdemCronologica()
+    {
+        var inicio = new DateTime(2026, 3, 10, 12, 0, 0, DateTimeKind.Utc);
+        var emExecucao = new OrdemDeServicoBuilder().EmExecucao().ComHistoricoEmOrdemInversa(inicio);
+        var aguardandoAprovacao = new OrdemDeServicoBuilder().AguardandoAprovacao().ComHistoricoEmOrdemInversa(inicio, mesmaData: true);
+        await _factory.SemearAsync(emExecucao, aguardandoAprovacao);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ObterTokenAsync());
+
+        var response = await _client.GetAsync("/api/ordens-de-servico?pagina=1&tamanhoPagina=50");
+        response.EnsureSuccessStatusCode();
+
+        var itens = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("itens").EnumerateArray().ToList();
+        List<string?> HistoricoDe(Guid id) => itens.Single(i => i.GetProperty("id").GetGuid() == id)
+            .GetProperty("historicoStatus").EnumerateArray().Select(h => h.GetProperty("status").GetString()).ToList();
+
+        HistoricoDe(emExecucao.Id).Should().Equal("Recebida", "EmDiagnostico", "AguardandoAprovacao", "AguardandoPagamento", "EmExecucao");
+        HistoricoDe(aguardandoAprovacao.Id).Should().Equal("Recebida", "EmDiagnostico", "AguardandoAprovacao");
     }
 
     [Fact]

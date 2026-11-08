@@ -66,6 +66,53 @@ public class OrdensDeServicoControllerTests : IClassFixture<CustomWebApplication
         corpo.GetProperty("pagamentoExpiraEm").ValueKind.Should().Be(JsonValueKind.Null);
     }
 
+    private static readonly DateTime Inicio = new(2026, 3, 10, 12, 0, 0, DateTimeKind.Utc);
+
+    private static readonly string[] FluxoDaOsFinalizada =
+        { "Recebida", "EmDiagnostico", "AguardandoAprovacao", "AguardandoPagamento", "EmExecucao", "Finalizada" };
+
+    [Fact]
+    public async Task ObterPorId_HistoricoGravadoForaDeOrdem_DeveRetornarEmOrdemCronologica()
+    {
+        var ordem = new OrdemDeServicoBuilder().Finalizada().ComHistoricoEmOrdemInversa(Inicio);
+        await _factory.SemearAsync(ordem);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ObterTokenAsync());
+
+        var response = await _client.GetAsync($"/api/ordens-de-servico/{ordem.Id}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var historico = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("historicoStatus").EnumerateArray().ToList();
+        historico.Select(h => h.GetProperty("status").GetString()).Should().Equal(FluxoDaOsFinalizada);
+        historico.Select(h => h.GetProperty("dataAlteracao").GetDateTime()).Should().BeInAscendingOrder();
+    }
+
+    [Fact]
+    public async Task ObterPorNumero_HistoricoGravadoForaDeOrdem_DeveRetornarEmOrdemCronologica()
+    {
+        var ordem = new OrdemDeServicoBuilder().Finalizada().ComHistoricoEmOrdemInversa(Inicio);
+        await _factory.SemearAsync(ordem);
+
+        var response = await _client.GetAsync($"/api/ordens-de-servico/numero/{ordem.Numero}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var historico = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("historicoStatus").EnumerateArray().ToList();
+        historico.Select(h => h.GetProperty("status").GetString()).Should().Equal(FluxoDaOsFinalizada);
+    }
+
+    [Fact]
+    public async Task ObterPorId_TransicoesComAMesmaData_DeveRetornarNaOrdemDoFluxo()
+    {
+        var ordem = new OrdemDeServicoBuilder().Finalizada().ComHistoricoEmOrdemInversa(Inicio, mesmaData: true);
+        await _factory.SemearAsync(ordem);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ObterTokenAsync());
+
+        var response = await _client.GetAsync($"/api/ordens-de-servico/{ordem.Id}");
+
+        response.StatusCode.Should().Be(HttpStatusCode.OK);
+        var historico = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("historicoStatus").EnumerateArray().ToList();
+        historico.Select(h => h.GetProperty("status").GetString()).Should().Equal(FluxoDaOsFinalizada);
+    }
+
     private async Task<string> ObterTokenAsync()
     {
         return await Task.FromResult(TestTokenFactory.GerarToken(_factory));

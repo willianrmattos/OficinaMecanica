@@ -45,7 +45,17 @@ public class OrdemDeServico : AggregateRoot
     public IReadOnlyCollection<ItemPeca> ItensPeca => _itensPeca.AsReadOnly();
 
     private readonly List<HistoricoStatus> _historicoStatus = new();
-    public IReadOnlyCollection<HistoricoStatus> HistoricoStatus => _historicoStatus.AsReadOnly();
+
+    // A ordem cronologica e regra do agregado, nao da consulta: o banco entrega as linhas na ordem do indice da chave, que e um Guid
+    // aleatorio, e o EF preenche a lista nessa ordem. Em empate de data (duas transicoes no mesmo instante) optei por desempatar pela
+    // posicao do status no fluxo, e nao por uma chave sequencial (pediria migration, e o Guid nao serve): as transicoes so avancam e
+    // cada status entra uma unica vez, entao a posicao reproduz a ordem em que ocorreram.
+    public IReadOnlyCollection<HistoricoStatus> HistoricoStatus =>
+        _historicoStatus
+            .OrderBy(h => h.DataAlteracao)
+            .ThenBy(h => PosicaoNoFluxo(h.Status))
+            .ToList()
+            .AsReadOnly();
 
     private OrdemDeServico() { } // EF Core
 
@@ -222,6 +232,13 @@ public class OrdemDeServico : AggregateRoot
         var posicaoAtual = Array.IndexOf(CaminhoPrincipal, Status);
         var posicaoAlvo = Array.IndexOf(CaminhoPrincipal, alvo);
         return posicaoAtual >= 0 && posicaoAlvo >= 0 && posicaoAtual >= posicaoAlvo;
+    }
+
+    // Cancelada e OrcamentoRecusado saem do caminho principal e sao terminais (nunca coexistem), entao ficam depois de todos os demais.
+    public static int PosicaoNoFluxo(StatusOrdemDeServico status)
+    {
+        var posicao = Array.IndexOf(CaminhoPrincipal, status);
+        return posicao >= 0 ? posicao : CaminhoPrincipal.Length;
     }
 
     private void AlterarStatus(StatusOrdemDeServico novoStatus, string observacao)
