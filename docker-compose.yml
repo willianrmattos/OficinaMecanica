@@ -27,6 +27,9 @@ services:
       RabbitMq__VirtualHost: "/"
       RabbitMq__Username: "${RABBITMQ_DEFAULT_USER:?defina RABBITMQ_DEFAULT_USER no .env}"
       RabbitMq__Password: "${RABBITMQ_DEFAULT_PASS:?defina RABBITMQ_DEFAULT_PASS no .env}"
+      # Consulta sincrona GET /api/ordens-de-servico/{id}/execucao: a Execucao roda em outro projeto de Compose (porta do host
+      # EXECUCAO_API_PORT, padrao 5002), alcancada pelo host como o broker e o JwksUri. Se ela estiver fora, a rota cai no estado da saga.
+      Execucao__BaseUrl: "http://host.docker.internal:5002"
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:

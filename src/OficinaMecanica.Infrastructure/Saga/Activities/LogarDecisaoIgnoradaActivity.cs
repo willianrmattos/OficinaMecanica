@@ -28,6 +28,11 @@ public sealed class LogarDecisaoIgnoradaActivity<TMensagem> : AtividadeDaSaga<TM
             contexto.Saga.CurrentState,
             contexto.MessageId);
 
+        MetricasDaSaga.DecisaoIgnorada.Add(
+            1,
+            new KeyValuePair<string, object?>("decisao", typeof(TMensagem).Name),
+            new KeyValuePair<string, object?>("estado", contexto.Saga.CurrentState));
+
         return Task.CompletedTask;
     }
 }

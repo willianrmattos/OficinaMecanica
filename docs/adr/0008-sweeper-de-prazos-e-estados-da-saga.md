@@ -81,7 +81,7 @@ RabbitMQ 4) em `tests/OficinaMecanica.Infrastructure.Tests`.
 
 ### Estados de compensacao e falha tecnica
 - `CancelandoPagamento`, `Estornando` e `EstornoPendenteManual` nao tem decisao automatica: o SLA e so de alerta (log de
-  erro estruturado e, quando existir, a metrica de saga presa). O Billing e a autoridade sobre o pagamento e
+  erro estruturado e o gauge `saga_compensacao_presa`). O Billing e a autoridade sobre o pagamento e
   `EstornoPendenteManual` nunca vira `Cancelada` por conta propria.
 - `Fault<T>` e falha tecnica do comando enviado. Todo `Fault` vai para o log de erro (ids da OS e da mensagem, tipo e
   texto da excecao) e depois, por comando: `SolicitarDiagnostico` e `GerarOrcamento` cancelam a OS; `SolicitarPagamento`
@@ -116,8 +116,9 @@ normal (`PagamentoCancelado`...) chega e a saga segue.
   Relic) procura `Falha técnica no comando`; `{Comando}` distingue `CancelarPagamento`/`CancelarOrcamento`/`CancelarProducao`
   (compensacao presa) dos demais, e os ids localizam a OS e a mensagem na `_error` (propriedade `message_id`). O passo nao
   carimba `AtualizadaEm`, entao `CurrentState` + `AtualizadaEm` parados em `OrdemDeServicoSagas` tambem acham a saga presa.
-- **Metrica**: a metrica de saga presa / compensacao falhou entra junto das demais metricas da saga (fase de codigo seguinte); dashboard e alerta (NRQL) ficam para a documentacao final. Ela conta sagas por
-  estado e idade e os `Fault` de compensacao; ainda nao existe: hoje o alerta e so o log.
+- **Metrica**: `saga_compensacao_falhou` (um por `Fault` de compensacao, tag `comando`) e o gauge `saga_compensacao_presa` (sagas em
+  compensacao paradas alem do limite) acompanham o log; a descricao completa esta em "Metricas da saga" abaixo. Dashboard e alerta
+  (NRQL) ficam para a documentacao final.
 
 **Runbook de redrive** (operador):
 1. Do alerta, pegar `OrdemDeServicoId` e `MessageIdDoComando`; ver o estado da saga
@@ -140,6 +141,55 @@ que falhou, ou que chegou a ter efeito parcial, e entregar o mesmo comando com o
 SQL e RabbitMQ reais prova o ciclo (consumer do Billing lanca em `CancelarPagamento`, a saga so loga e fica em
 `CancelandoPagamento` sem reenviar, a mensagem e devolvida da `_error` e a saga fecha em `Cancelada`); ele move a mensagem
 com o cliente AMQP, que e o que o shovel faz, e nao exercita o plugin de shovel em si.
+
+### Metricas da saga
+Meter `OficinaMecanica.Saga` (`System.Diagnostics.Metrics`, no padrao do `MetricasNegocio`; registrado no OpenTelemetry por
+`AddMeter(MetricasDaSaga.MeterName)` no `Program.cs`, so quando `Otel:Endpoint` esta configurado). Nenhuma tag leva id de OS, numero ou
+texto livre: so nome de estado, de evento, de comando e valor de enum (cardinalidade baixa e sem dado pessoal).
+
+| Instrumento | Tags | O que significa |
+|---|---|---|
+| `saga_iniciada` | - | OS aberta que criou a saga |
+| `saga_concluida` | - | reparo finalizado (`Concluida`) |
+| `saga_cancelada` | `estado_origem` | saga encerrada em `Cancelada`, e de que estado saiu |
+| `saga_orcamento_recusado` | `causa` (`ClienteRecusouOrcamento` ou `PrazoExpirado`) | encerrada em `OrcamentoRecusado` |
+| `saga_estorno_pendente_manual` | `causa` (`EstornoFalhou` ou `Fault<EstornarPagamento>`) | parou em `EstornoPendenteManual`: o dinheiro nao voltou |
+| `saga_compensacao_falhou` | `comando` (`CancelarPagamento`, `CancelarOrcamento`, `CancelarProducao`) | um por `Fault` do comando de compensacao; o comando espera o redrive na `_error` do destino |
+| `saga_decisao_ignorada` | `decisao`, `estado` | aprovar, recusar ou cancelar que a API aceitou com 202 e a saga nao podia mais aplicar |
+| `saga_prazo_expirado` | `tipo` (`Aprovacao`, `Pagamento`) | prazo vencido que de fato mudou o estado (so o vigente; o substituido ou ja decidido nao conta) |
+| `saga_duracao_estado_segundos` (histograma) | `estado` | quanto tempo a saga ficou no estado que acabou de deixar |
+| `saga_por_estado` (gauge) | `estado` | sagas em cada estado, na ultima coleta |
+| `saga_compensacao_presa` (gauge) | `estado` | sagas em `CancelandoPagamento`, `Estornando` ou `EstornoPendenteManual` sem atualizacao ha mais que `Saga__CompensacaoPresaMinutos` (30); zero explicito em cada estado |
+
+- **Onde emite**: os contadores de transicao e a duracao saem de um observador de eventos da maquina (`ObservadorDeMetricasDaSaga`,
+  conectado no construtor da maquina): o MassTransit o chama depois de TODOS os passos do evento rodarem sem excecao, entao uma
+  transicao que falha num passo (e que o retry refaz) nao conta. `saga_compensacao_falhou` e `saga_decisao_ignorada` saem das duas
+  activities que ja so avisavam, junto do log. Nenhum passo nem transicao da maquina mudou por causa das metricas.
+- **Duracao**: medida entre o `AtualizadaEm` de ANTES do evento e o carimbo da transicao. E o tempo desde a ultima atualizacao da
+  saga, nao desde a entrada no estado: em `AguardandoPagamento` (o `PagamentoSolicitado` atualiza sem mudar de estado, segundos depois
+  da entrada) e em `CancelandoPagamento` a diferenca e de segundos. Medir a entrada exigiria uma coluna nova (migration) e nao se justifica.
+- **Gauges**: leem o proprio banco (`ColetorDeMetricasDaSaga`, duas consultas agregadas sobre uma tabela com indice em `CurrentState`) a
+  cada ciclo do `MetricasDeNegocioBackgroundService` (5 min), sem tarefa de fundo nova. Antes da primeira coleta nao emitem nada (zero
+  seria uma afirmacao falsa). Com varias replicas todas exportam o mesmo valor: agregar com `max`, nunca `sum`; os contadores, ao
+  contrario, somam (cada transicao e processada por uma replica so). O exportador deve usar temporalidade delta para os contadores
+  (`OTEL_EXPORTER_OTLP_METRICS_TEMPORALITY_PREFERENCE=delta`, ver CLAUDE.md).
+- **Limitacoes conhecidas** (aceitas):
+  1. A duracao e o tempo desde a ultima atualizacao da saga, nao desde a entrada no estado (acima).
+  2. Os gauges so existem com `Otel:Endpoint` e partem da ultima coleta (ate 5 min de defasagem).
+  3. Com varias replicas os gauges se repetem por pod (agregar com `max`).
+  4. **A contagem de transicao pode ficar a MAIOR**: a emissao acontece antes do commit da transacao do consumer (EF e outbox). Se o
+     commit falhar e o retry do endpoint reprocessar a mensagem, a transicao e contada de novo: `saga_concluida`, `saga_cancelada`,
+     `saga_orcamento_recusado`, `saga_estorno_pendente_manual`, `saga_prazo_expirado`, o histograma de duracao, `saga_decisao_ignorada`
+     e `saga_compensacao_falhou` (esses dois, emitidos junto do log da activity) valem a mesma regra. Nunca fica a menor. Optei por nao
+     mover a emissao para depois do commit (exigiria um ponto pos-commit no pipeline do consumer para uma janela rara, de erro do
+     proprio banco). Consequencia para quem consome: **alertar por taxa ou limiar, nunca por contagem exata**, e tratar os gauges
+     `saga_por_estado` e `saga_compensacao_presa` como a fonte autoritativa (leem o banco). Um teste com SQL Server e RabbitMQ reais
+     documenta o comportamento (`SagaMetricasNoCommitComSqlTests`).
+- **Como alertar** (so os sinais; o NRQL fica para a documentacao final): `saga_compensacao_presa > 0` (saga presa sem desfecho),
+  `saga_por_estado{estado="EstornoPendenteManual"} > 0` (dinheiro do cliente retido; o contador `saga_estorno_pendente_manual` serve como aviso
+  de taxa, porque commit falho que vai para a `_error` o incrementa sem a saga ter chegado ao estado) e aumento de `saga_compensacao_falhou` (comando na `_error`).
+  `saga_decisao_ignorada` e informativa (pico = pessoas decidindo depois do prazo); `saga_duracao_estado_segundos` por `estado` mostra
+  onde o fluxo demora.
 
 ### Ids deterministicos
 - Todo comando enviado vai por `Send` para `queue:{Filas.X}` com `MessageId` derivado de SHA-256 de
@@ -171,7 +221,7 @@ com o cliente AMQP, que e o que o shovel faz, e nao exercita o plugin de shovel 
 - O OS Service concentra a orquestracao (ADR 0003); cada comando novo precisa de activity, id deterministico e testes.
 - A saga nunca mexe na Execucao alem de `CancelarProducao`: um diagnostico de OS recusada continua registrado la.
 - Compensacao que falha de forma tecnica (`Fault` de `CancelarPagamento`, `CancelarOrcamento` ou `CancelarProducao`) depende de
-  uma pessoa fazer o redrive: so o log de erro avisa ate a metrica de saga presa existir. E o preco de nao reenviar sozinho
+  uma pessoa fazer o redrive: o aviso e o log de erro, a metrica `saga_compensacao_falhou` e o gauge `saga_compensacao_presa`. E o preco de nao reenviar sozinho
   (sem loop com mensagem venenosa) e de nunca decidir pelo Billing.
 - `Fault<T>` conservador pode estornar mais do que o necessario (`IniciarExecucao` que falhou por indisponibilidade
   transitoria esgotada); o custo e preferir devolver o dinheiro a reter pagamento de servico que nao comecou.

@@ -8,11 +8,12 @@ using OficinaMecanica.Application.Commands.LiberarEstoque;
 using OficinaMecanica.Application.Commands.MarcarDiagnosticoIniciado;
 using OficinaMecanica.Application.Commands.RegistrarOrcamentoGerado;
 using OficinaMecanica.Application.Commands.ReservarEstoque;
+using OficinaMecanica.Application.Queries.ObterExecucaoDaOrdem;
 using OficinaMecanica.Application.Queries.ObterSnapshotDaOrdem;
 
 namespace OficinaMecanica.Application.Tests.Validators;
 
-// Estes comandos (e a consulta de snapshot da saga) so carregam o id da OS: a unica regra e ele nao ser vazio.
+// Estes comandos (e as consultas de snapshot e de execucao da OS) so carregam o id da OS: a unica regra e ele nao ser vazio.
 public class ValidatorsDeComandosPorOrdemTests
 {
     public static TheoryData<IValidator, Func<Guid, object>> Comandos => new()
@@ -26,6 +27,7 @@ public class ValidatorsDeComandosPorOrdemTests
         { new IniciarExecucaoDaOrdemCommandValidator(), id => new IniciarExecucaoDaOrdemCommand(id) },
         { new FinalizarOrdemCommandValidator(), id => new FinalizarOrdemCommand(id) },
         { new ObterSnapshotDaOrdemQueryValidator(), id => new ObterSnapshotDaOrdemQuery(id) },
+        { new ObterExecucaoDaOrdemQueryValidator(), id => new ObterExecucaoDaOrdemQuery(id) },
     };
 
     [Theory]

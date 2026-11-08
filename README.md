@@ -519,6 +519,7 @@ dois repositorios.
 | PATCH | /api/ordens-de-servico/{id}/status | Sim | Atualizar status (bloqueado para EmExecucao e OrcamentoRecusado, que tem endpoint proprio) |
 | POST | /api/ordens-de-servico/{id}/aprovar | Nao | Aprovar orcamento |
 | POST | /api/ordens-de-servico/{id}/recusar | Nao | Recusar orcamento (corpo opcional `{ "motivo": "..." }`) |
+| GET | /api/ordens-de-servico/{id}/execucao | Sim | Detalhe da execucao (producao) da OS: pergunta a Execucao com timeout, retry e circuit breaker e, se ela estiver fora ou ainda nao tiver a ordem, devolve 200 com o ultimo estado conhecido da saga (`origem = "saga"`) |
 | GET | /api/ordens-de-servico/tempo-medio | Sim | Tempo medio de execucao |
 
 ## Regras de Negocio

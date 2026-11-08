@@ -51,7 +51,7 @@ as transicoes de `Fault<T>`, a do `DiagnosticoConcluido` que chega antes do `Dia
 do cancelamento do staff durante `CancelandoPagamento`; (3) o `Fault<T>` de um comando de compensacao
 (`CancelarPagamento`, `CancelarOrcamento`, `CancelarProducao`) so gera log de erro estruturado: nao ha
 reenvio automatico nem transicao, a saga fica onde estava e o comando falho espera na `_error` do destino
-pelo redrive manual (runbook no ADR 0008). A metrica de saga presa / compensacao falhou entra junto das demais metricas da saga (fase de codigo seguinte); dashboard e alerta (NRQL) ficam para a documentacao final. Ate la o alerta e o log de erro.
+pelo redrive manual (runbook no ADR 0008). As metricas da saga existem (`System.Diagnostics.Metrics`, Meter `OficinaMecanica.Saga`): `saga_compensacao_falhou` conta cada `Fault` de compensacao e o gauge `saga_compensacao_presa` mostra as sagas paradas em estado de compensacao alem do limite (nomes, tags e como alertar na secao "Metricas da saga" do ADR 0008); dashboard e alerta (NRQL) ficam para a documentacao final. Ate la o alerta e o log de erro mais essas duas metricas.
 
 ## Consequencias
 ### Positivas

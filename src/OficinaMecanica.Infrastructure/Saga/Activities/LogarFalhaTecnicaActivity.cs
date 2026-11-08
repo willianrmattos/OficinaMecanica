@@ -1,5 +1,6 @@
 using MassTransit;
 using Microsoft.Extensions.Logging;
+using OficinaMecanica.Contracts.Commands;
 
 namespace OficinaMecanica.Infrastructure.Saga.Activities;
 
@@ -17,6 +18,9 @@ public sealed class LogarFalhaTecnicaActivity<TComando> : AtividadeDaSaga<Fault<
         _logger = logger;
     }
 
+    private static readonly bool EhCompensacao =
+        typeof(TComando) == typeof(CancelarPagamento) || typeof(TComando) == typeof(CancelarOrcamento) || typeof(TComando) == typeof(CancelarProducao);
+
     protected override bool CarimbaAtualizacao => false;
 
     protected override Task ExecutarAsync(BehaviorContext<OrdemDeServicoSagaState, Fault<TComando>> contexto)
@@ -33,6 +37,11 @@ public sealed class LogarFalhaTecnicaActivity<TComando> : AtividadeDaSaga<Fault<
             falha.Host?.MachineName,
             causa?.ExceptionType,
             causa?.Message);
+
+        // Os tres comandos de compensacao nao tem reenvio nem transicao: o log acima e esta metrica sao o sinal de que o
+        // comando espera o redrive manual na fila de erro do destino.
+        if (EhCompensacao)
+            MetricasDaSaga.CompensacaoFalhou.Add(1, new KeyValuePair<string, object?>("comando", typeof(TComando).Name));
 
         return Task.CompletedTask;
     }

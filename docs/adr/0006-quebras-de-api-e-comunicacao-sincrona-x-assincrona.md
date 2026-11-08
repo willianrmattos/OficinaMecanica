@@ -36,6 +36,31 @@ clara sobre quando uma chamada pode ser sincrona entre servicos.
 - Regra pratica: **escrita entre servicos e sempre assincrona; leitura entre servicos pode ser
   sincrona so se tiver degradacao definida**.
 
+### Implementacao da consulta sincrona (d)
+- Rota `GET /api/ordens-de-servico/{id}/execucao` (JWT como o `GET {id}`; 401 sem token, 400 para id vazio, 404 se a OS nao existe). O
+  handler (query + validator + `ValidationBehavior`) le a OS e a saga do PROPRIO banco (`ISagaStateReader`) e pergunta a Execucao por
+  `IExecucaoClient`, que chama `GET /api/ordens-de-producao/{id}` dela. O OS Service nunca le o banco da Execucao.
+- Resposta 200 em dois formatos, sempre com `origem`: `"execucao"` (detalhe da producao: status, mecanico, laudo, etapas, apontamentos,
+  datas; o que a Execucao devolve alem disso e ignorado) ou `"saga"` (status da OS e ultimo estado conhecido da saga, `producao` nulo,
+  `motivoDoFallback` = `ProducaoNaoEnfileirada` quando a Execucao respondeu 404 porque a ordem ainda nao foi enfileirada, ou
+  `ExecucaoIndisponivel`). No fallback so aparece o que o OS Service tem: nada da producao e inventado.
+- O modelo da Execucao no OS (`ProducaoDaOrdemDto`) e proprio (camada anticorrupcao): o JSON da Execucao e lido por um tipo interno da
+  Infrastructure e mapeado; nenhum projeto da Execucao e referenciado, so a forma do JSON e o contrato.
+- Resiliencia (`Microsoft.Extensions.Http.Resilience` 8.10.0, pipeline de fora para dentro: timeout total, retry, circuit breaker,
+  timeout por tentativa): retry com backoff exponencial e jitter **so para GET** e so para falha transitoria (5xx, falha de rede,
+  timeout); **nunca 4xx** (nem 408 nem 429, que o padrao do Polly repetiria: 401/403/404 nao mudam se repetidos). O circuit breaker so
+  conta falha transitoria: erro do chamador nao o abre. 401, 403 e outro 4xx da Execucao viram fallback (o token repassado nao serve) e
+  nao erro 5xx para o usuario. Circuito aberto, timeout e falha de rede tambem viram fallback; so o cancelamento pedido pelo proprio
+  chamador propaga.
+- A resposta precisa ser da mesma OS que se perguntou: o `id` do JSON da Execucao e conferido e, se for outro (ou faltar), a resposta e descartada
+  e a consulta cai no fallback `ExecucaoIndisponivel`, com um Warning que leva so os dois ids. Resposta errada nao e falha transitoria: nao e repetida.
+- O JWT do chamador (`Authorization`) e um id de correlacao (`X-Correlation-Id`: o TraceId do Activity corrente ou o `TraceIdentifier`)
+  seguem na chamada; o `traceparent` o proprio HttpClient propaga quando ha Activity. O token nunca e logado.
+- Configuracao `Execucao__*` com `ValidateOnStart`: `BaseUrl` (padrao `http://localhost:5002`; no compose `http://host.docker.internal:5002`;
+  no AKS `http://oficinamecanica-execucao`, o Service da Execucao no mesmo namespace), `TimeoutSegundos` (total, 6),
+  `TimeoutPorTentativaSegundos` (2), `TentativasDeRetry` (2), `AtrasoDoRetryMs` (200), `CircuitoTaxaDeFalha` (0,5),
+  `CircuitoMinimoDeChamadas` (5), `CircuitoJanelaSegundos` (30), `CircuitoPausaSegundos` (30). O pior caso para o usuario e o timeout total.
+
 ## Consequencias
 ### Positivas
 - Cada transicao de status tem um unico escritor, sem corrida entre HTTP e Saga.

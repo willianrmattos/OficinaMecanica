@@ -17,6 +17,11 @@ public sealed class SagaOptions
     // Quantos prazos vencidos uma varredura reivindica de uma vez.
     public int SweeperLote { get; set; } = 50;
 
+    // Quanto tempo uma saga pode ficar parada num estado de compensacao (CancelandoPagamento, Estornando, EstornoPendenteManual)
+    // antes de entrar no gauge saga_compensacao_presa. Esses estados esperam um servico externo ou uma pessoa; o limite e so o
+    // ponto a partir do qual a espera vira alerta, nunca uma decisao automatica.
+    public int CompensacaoPresaMinutos { get; set; } = 30;
+
     // Desliga so o BackgroundService (os prazos continuam sendo gravados). Existe para os testes dispararem o sweeper a mao.
     public bool SweeperHabilitado { get; set; } = true;
 }

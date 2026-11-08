@@ -53,4 +53,22 @@ public class SwaggerOrdensDeServicoTests : IClassFixture<CustomWebApplicationFac
             .GetProperty("content").GetProperty("application/json").GetProperty("schema");
         esquema.GetProperty("$ref").GetString().Should().EndWith("SolicitacaoAceitaDto");
     }
+
+    [Fact]
+    public async Task ObterExecucao_DeveDocumentar200_400_401E404ComTextoEmPortugues()
+    {
+        var operacao = await ObterOperacaoAsync("/api/ordens-de-servico/{id}/execucao", "get");
+
+        CodigosDeResposta(operacao).Should().BeEquivalentTo("200", "400", "401", "404");
+        operacao.GetProperty("operationId").GetString().Should().Be("OrdensDeServico_ObterExecucao");
+        operacao.GetProperty("summary").GetString().Should().Be("Consulta detalhada da execução (produção) de uma ordem de serviço.");
+        operacao.GetProperty("description").GetString().Should().Contain("origem = \"saga\"");
+
+        var respostas = operacao.GetProperty("responses");
+        respostas.GetProperty("404").GetProperty("description").GetString().Should().Be("A ordem de serviço não existe.");
+        respostas.GetProperty("401").GetProperty("description").GetString().Should().Be("Token ausente ou inválido.");
+        respostas.GetProperty("400").GetProperty("description").GetString().Should().Be("Id da ordem de serviço inválido.");
+        respostas.GetProperty("200").GetProperty("content").GetProperty("application/json").GetProperty("schema")
+            .GetProperty("$ref").GetString().Should().EndWith("ExecucaoDaOrdemDto");
+    }
 }

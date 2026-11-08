@@ -23,6 +23,10 @@ public sealed class OrdemDeServicoStateMachine : MassTransitStateMachine<OrdemDe
     {
         InstanceState(x => x.CurrentState);
 
+        // As metricas de transicao saem de um observador que so le o estado antes e depois de cada evento: nenhum passo da
+        // maquina muda por causa delas.
+        ConnectEventObserver(new ObservadorDeMetricasDaSaga());
+
         DeclararEventos();
         DeclararFalhas();
 

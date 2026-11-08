@@ -21,6 +21,7 @@ public class SagaOptionsETiposDaSagaTests
         opcoes.PrazoPagamentoHoras.Should().Be(48);
         opcoes.SweeperIntervaloSegundos.Should().Be(30);
         opcoes.SweeperLote.Should().Be(50);
+        opcoes.CompensacaoPresaMinutos.Should().Be(30);
         opcoes.SweeperHabilitado.Should().BeTrue();
         SagaOptions.Secao.Should().Be("Saga");
     }
@@ -36,6 +37,7 @@ public class SagaOptionsETiposDaSagaTests
     [InlineData(nameof(SagaOptions.PrazoPagamentoHoras))]
     [InlineData(nameof(SagaOptions.SweeperIntervaloSegundos))]
     [InlineData(nameof(SagaOptions.SweeperLote))]
+    [InlineData(nameof(SagaOptions.CompensacaoPresaMinutos))]
     public void Validador_ComValorZeroOuNegativo_DeveRecusarNomeandoAChave(string propriedade)
     {
         foreach (var invalido in new[] { 0, -1 })

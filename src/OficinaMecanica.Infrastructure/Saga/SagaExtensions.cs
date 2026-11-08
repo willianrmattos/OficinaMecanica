@@ -3,6 +3,7 @@ using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.DependencyInjection.Extensions;
 using Microsoft.Extensions.Options;
+using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Contracts;
 using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.Infrastructure.Messaging;
@@ -24,6 +25,8 @@ public static class SagaExtensions
         services.TryAddSingleton(TimeProvider.System);
         services.AddScoped<IPrazoRepository, PrazoRepository>();
         services.AddScoped<SweeperDePrazos>();
+        services.AddScoped<ColetorDeMetricasDaSaga>();
+        services.AddScoped<ISagaStateReader, SagaStateReader>();
         services.AddHostedService<SweeperDePrazosBackgroundService>();
 
         // Escopo do consumer: a activity compartilha o AppDbContext (e a transacao) da mensagem que a dispara.

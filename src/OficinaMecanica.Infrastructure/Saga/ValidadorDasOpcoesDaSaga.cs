@@ -12,6 +12,7 @@ public sealed class ValidadorDasOpcoesDaSaga : IValidateOptions<SagaOptions>
         Exigir(opcoes.PrazoPagamentoHoras, nameof(opcoes.PrazoPagamentoHoras), falhas);
         Exigir(opcoes.SweeperIntervaloSegundos, nameof(opcoes.SweeperIntervaloSegundos), falhas);
         Exigir(opcoes.SweeperLote, nameof(opcoes.SweeperLote), falhas);
+        Exigir(opcoes.CompensacaoPresaMinutos, nameof(opcoes.CompensacaoPresaMinutos), falhas);
 
         return falhas.Count == 0 ? ValidateOptionsResult.Success : ValidateOptionsResult.Fail(falhas);
     }

@@ -5,7 +5,9 @@ using Testcontainers.RabbitMq;
 
 namespace OficinaMecanica.Infrastructure.Tests.Support;
 
-[CollectionDefinition(Nome)]
+// Sem paralelismo com as demais colecoes: o Meter da saga e estatico e os testes de infraestrutura que afirmam sobre metricas nao
+// podem receber medicao de um teste de outra colecao rodando ao mesmo tempo.
+[CollectionDefinition(Nome, DisableParallelization = true)]
 public sealed class InfraCollection : ICollectionFixture<InfraFixture>
 {
     public const string Nome = "Infra";

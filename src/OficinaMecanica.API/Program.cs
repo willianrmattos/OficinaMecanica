@@ -4,6 +4,7 @@ using OficinaMecanica.API.BackgroundServices;
 using OficinaMecanica.API.Health;
 using OficinaMecanica.Infrastructure;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Infrastructure.Execucao;
 using OficinaMecanica.Infrastructure.Messaging;
 using OficinaMecanica.Infrastructure.Saga;
 using OficinaMecanica.API.Middleware;
@@ -52,6 +53,7 @@ builder.Host.UseSerilog();
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
 builder.Services.AddMensageriaComSaga(builder.Configuration);
+builder.Services.AddClienteDaExecucao(builder.Configuration);
 
 if (!string.IsNullOrWhiteSpace(otelEndpoint))
 {
@@ -66,6 +68,7 @@ if (!string.IsNullOrWhiteSpace(otelEndpoint))
             .AddAspNetCoreInstrumentation()
             .AddRuntimeInstrumentation()
             .AddMeter(MetricasNegocio.MeterName)
+            .AddMeter(MetricasDaSaga.MeterName)
             .AddOtlpExporter(otlp => otlp.Endpoint = new Uri(otelEndpoint)));
 
     builder.Services.AddHostedService<MetricasDeNegocioBackgroundService>();
@@ -90,6 +93,11 @@ builder.Services.AddSwaggerGen(c =>
     // operationId pra saber o que atualizar vs. apagar).
     c.CustomOperationIds(apiDesc =>
         $"{apiDesc.ActionDescriptor.RouteValues["controller"]}_{apiDesc.ActionDescriptor.RouteValues["action"]}");
+
+    // Descricoes e respostas em portugues vem dos comentarios XML dos controllers (gerados no build e copiados no publish).
+    var comentarios = Path.Combine(AppContext.BaseDirectory, "OficinaMecanica.API.xml");
+    if (File.Exists(comentarios))
+        c.IncludeXmlComments(comentarios);
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
