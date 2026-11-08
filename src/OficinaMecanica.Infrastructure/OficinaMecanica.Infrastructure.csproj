@@ -6,6 +6,8 @@
 
   <ItemGroup>
     <PackageReference Include="MailKit" Version="4.17.0" />
+    <!-- Optei por fixar a versao corrigida: o MailKit traz o Pkcs 8.0.1 (CVE-2026-84008, negacao de servico) como dependencia transitiva e o scan da imagem no CI reprova HIGH com correcao publicada. -->
+    <PackageReference Include="System.Security.Cryptography.Pkcs" Version="8.0.2" />
     <!-- Optei por fixar a 8.5.12: a linha 9.x do MassTransit exige licenca comercial (ADR 0004). -->
     <PackageReference Include="MassTransit" Version="8.5.12" />
     <PackageReference Include="MassTransit.EntityFrameworkCore" Version="8.5.12" />
