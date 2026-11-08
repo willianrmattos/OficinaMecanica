@@ -73,8 +73,8 @@ os MESMOS projetos de `tests/*.Tests` (com `Category!=Infra` e `Category=Infra`)
 chamada do gate apagada, o gate lendo o numero bruto, cada filtro de exclusao removido, `-strict` retirado, falha do
 kubeconform ignorada, so a primeira pasta validada...). Os casos que dependem do Docker (kubeconform) sao pulados com aviso
 quando ele nao esta ligado. Na ultima execucao completa foram 78 casos e 38 mutantes detectados; na mesma execucao
-(`ci-local.sh`, com o BDD ja nas fases de teste) foram 1054 testes (Contracts 71, Domain 145, Application 298, Integration 112,
-Infrastructure 416, dos quais 62 `Category=Infra`, e Bdd 12) e cobertura de linhas de 96,3% bruta (6225/6460) e 95,2% com as exclusoes (3336/3504).
+(`ci-local.sh`, com o BDD ja nas fases de teste) foram 1059 testes (Contracts 71, Domain 145, Application 301, Integration 114,
+Infrastructure 416, dos quais 62 `Category=Infra`, e Bdd 12) e cobertura de linhas de 96,40% bruta (6231/6464) e 95,27% com as exclusoes (3342/3508).
 
 **SonarCloud com Quality Gate bloqueante.** O job `quality` baixa o OpenCover do job anterior (artifact), roda
 `dotnet-sonarscanner begin/build/end` e usa `sonar.qualitygate.wait=true`: se o Quality Gate reprova, o job falha. Projeto e
@@ -118,7 +118,8 @@ aqui sem tocar o GitHub. O Dependabot de `github-actions` mantem os SHAs depois.
 `sql-connection-string`) na mesma sessao OIDC e roda `dotnet ef database update` antes do rollout, com ate 5 tentativas por
 causa do Azure SQL serverless. A ferramenta vem de `dotnet-tools.json` (`dotnet-ef 9.0.22`, a mesma linha do EF Core do
 projeto); o passo anterior instalava `dotnet-ef 8.*`, incompativel com o EF Core 9 que o `MassTransit.EntityFrameworkCore`
-exige. A API em `Production` nunca migra sozinha (so em `Development`).
+exige. A API em `Production` nunca migra sozinha (so em `Development`). E a decisao do ADR 0002 (migrations por step
+explicito no CI, com `ASPNETCORE_ENVIRONMENT=Production` no manifesto); este pipeline a aplica no job `deploy-to-aks`.
 
 **Ruleset versionado e `Quality` obrigatorio.** `.github/rulesets/protect-main-release.json` replica a protecao ja existente
 (`main` e `release`: sem delete nem force-push, PR obrigatorio) e exige os checks `Build & Test` e `Quality`;

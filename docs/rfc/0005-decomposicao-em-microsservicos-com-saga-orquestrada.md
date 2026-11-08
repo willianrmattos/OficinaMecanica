@@ -12,10 +12,13 @@ duas responsabilidades saem para repositorios proprios: `OficinaMecanica.Billing
 Os tres servicos (mais o `OficinaMecanica.Seguranca`, que nao muda) conversam por
 mensageria assincrona (RabbitMQ no AKS, via MassTransit) e coordenam o fluxo
 transacional da OS com uma Saga **orquestrada**, com compensacao em toda etapa que
-tem efeito colateral. Este RFC substitui a decisao de nao ter broker registrada no
-RFC 0002 (eventos de dominio in-process) e no ADR 0001 (comunicacao so sincrona),
-ambos escritos quando nenhum outro servico precisava reagir a eventos da OS. Passam a
-valer apenas para a comunicacao **dentro** de cada servico.
+tem efeito colateral. Este RFC substitui em parte o RFC 0002 (eventos de dominio
+in-process, sem broker) e o ADR 0001 (comunicacao so sincrona, sem mensageria), ambos
+escritos quando nenhum outro servico precisava reagir a eventos da OS: a ausencia de
+broker deixa de valer para a comunicacao **entre** servicos e segue valendo **dentro**
+de cada servico (Domain Events in-process via MediatR). O que esses documentos decidem
+alem disso nao muda: os Domain Events continuam sendo despachados in-process, e a
+validacao do JWT continua sendo HTTP sincrono contra o JWKS do Seguranca.
 
 ## Motivacao
 A oficina opera com varias filiais; o volume de ordens de servico e a interacao
@@ -67,15 +70,22 @@ status da OS: `AguardandoPagamento` (7) e `Cancelada` (8).
 ## Decisao
 Tres microsservicos de negocio independentes (OS, Billing, Execucao), cada um com
 repositorio, banco, pipeline e manifests proprios, coordenados por Saga orquestrada
-sobre RabbitMQ/MassTransit. O RFC 0002 e o ADR 0001 deixam de valer para a
-comunicacao **entre** servicos; os Domain Events in-process via MediatR continuam
-valendo **dentro** de cada servico (e-mail e metricas).
+sobre RabbitMQ/MassTransit. O RFC 0002 e o ADR 0001 ficam parcialmente substituidos:
+a ausencia de broker deixa de valer para a comunicacao **entre** servicos; os Domain
+Events in-process via MediatR (RFC 0002) continuam valendo **dentro** de cada servico
+(e-mail e metricas), e o JWKS sincrono (ADR 0001) continua sendo como os servicos
+validam o JWT do Seguranca.
 
 ## Documentos que detalham as decisoes
 | Decisao | Documento | Quando e escrito |
 |---|---|---|
 | Saga orquestrada, MassTransit 8 gratuito, contratos por copia | ADR 0003, 0004, 0005 (este repositorio) | Junto com este RFC |
 | Quebras de API e matriz sincrono x assincrono | ADR 0006 (este repositorio) | Junto com este RFC |
+| Clean Architecture, DDD e CQRS via MediatR (seguem valendo dentro de cada servico) | RFC 0001 (este repositorio) | Anterior a este RFC; nao muda |
+| Domain Events in-process sem broker e comunicacao so sincrona (substituidos so quanto a ausencia de broker entre servicos) | RFC 0002 e ADR 0001 (este repositorio) | Anteriores; o Status e a secao Atualizacao de cada um apontam para este RFC |
+| Divisao em repositorios e stack .NET 8 / C# | RFC 0003 e RFC 0004 (este repositorio) | Anteriores; o RFC 0003 foi estendido por este (Billing e Execucao ganham repositorio) |
+| Migrations do EF Core por step explicito no CI | ADR 0002 (este repositorio) | Anterior; o pipeline de 5 jobs do ADR 0009 o aplica, sem contradicao |
+| CI/CD independente, gate de cobertura e Sonar, Trivy antes do push, prontidao | ADR 0009 (este repositorio) | Escrito junto com o pipeline completo do OS Service |
 | Outbox/inbox transacional e publicacao antes do commit; sweeper de prazos e estados da saga | ADR 0007 e ADR 0008 (este repositorio) | Escritos depois de validar o desenho com a implementacao (F3a e F3b) |
 | Mercado Pago (Checkout Pro, webhook, estorno) | ADR no repositorio Billing | Quando o Billing for implementado |
 | MongoDB Atlas e fila com claim atomico | ADR no repositorio Execucao | Quando a Execucao for implementada |

@@ -48,6 +48,7 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
             .Include(o => o.ItensServico)
             .Include(o => o.ItensPeca)
             .Include(o => o.HistoricoStatus)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(o => o.Id == id, cancellationToken);
     }
 
@@ -57,6 +58,7 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
             .Include(o => o.ItensServico)
             .Include(o => o.ItensPeca)
             .Include(o => o.HistoricoStatus)
+            .AsSplitQuery()
             .FirstOrDefaultAsync(o => o.Numero == numero, cancellationToken);
     }
 
@@ -66,6 +68,7 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
             .Include(o => o.ItensServico)
             .Include(o => o.ItensPeca)
             .Include(o => o.HistoricoStatus)
+            .AsSplitQuery()
             .AsQueryable();
 
         query = AplicarFiltroStatus(query, filtroStatus);
@@ -91,6 +94,7 @@ public class OrdemDeServicoRepository : IOrdemDeServicoRepository
             .Include(o => o.ItensServico)
             .Include(o => o.ItensPeca)
             .Include(o => o.HistoricoStatus)
+            .AsSplitQuery()
             .Where(o => o.ClienteId == clienteId)
             .OrderByDescending(o => o.DataAbertura)
             .ToListAsync(cancellationToken);

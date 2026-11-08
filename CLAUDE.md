@@ -103,6 +103,18 @@ dotnet add <projeto> package <pacote> --source https://api.nuget.org/v3/index.js
 - **Concorrencia Otimista**: Propriedade `Version` como ConcurrencyToken
 - **Testes**: Moq para mocks (Application.Tests), Bogus para dados fake, builders fluentes em `OficinaMecanica.Tests.Common/Builders/` (ClienteBuilder, VeiculoBuilder, PecaBuilder, ServicoBuilder, OrdemDeServicoBuilder)
 
+### Decisoes registradas (`docs/adr/`, `docs/rfc/`)
+
+Numeracao propria deste repositorio, sem lacunas: ADR 0001-0009 e RFC 0001-0005.
+
+- **RFC 0001** Clean Architecture + DDD + CQRS via MediatR (vale dentro de cada servico). **RFC 0002** Domain Events in-process x broker externo: *parcialmente substituido* pelo
+  RFC 0005 (os eventos seguem in-process via MediatR; a ausencia de broker deixou de valer entre servicos). **RFC 0003** divisao em repositorios (estendido pelo RFC 0005).
+  **RFC 0004** .NET 8 / C#. **RFC 0005** decomposicao em microsservicos com Saga orquestrada.
+- **ADR 0001** comunicacao sincrona via HTTP/JWKS: *parcialmente substituido* pelo RFC 0005 e pelo ADR 0006 (o JWKS segue sincrono; entre OS, Billing e Execucao ha RabbitMQ).
+  **ADR 0002** migrations por step explicito no CI (aplicado no job `deploy-to-aks`, ADR 0009). **ADR 0003** saga orquestrada. **ADR 0004** MassTransit 8 fixado. **ADR 0005** contratos
+  por copia + golden JSON. **ADR 0006** quebras de API e sincrono x assincrono. **ADR 0007** outbox/inbox e publicacao antes do commit. **ADR 0008** sweeper e estados da saga.
+  **ADR 0009** CI/CD independente com gate de qualidade.
+
 ## Fluxo da Ordem de Servico
 
 ```
@@ -201,9 +213,9 @@ Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExe
   - **Docker Compose/desenvolvimento local**: container `sqlserver` (`mcr.microsoft.com/mssql/server:2022-latest`, edicao Developer) no proprio `docker-compose.yml`, com volume nomeado (`sqlserver_data`) pra persistir entre `docker compose down`/`up` — optei por rodar local em vez de sempre depender do Azure SQL estar acessivel/acordado (tier serverless com auto-pause), so pra desenvolver
 - Configurations em `Infrastructure/Data/Configurations/`; as tabelas do outbox/inbox do MassTransit entram no `OnModelCreating` (`AddInboxStateEntity`, `AddOutboxMessageEntity`, `AddOutboxStateEntity`), no mesmo banco, para participar da transacao do `SaveChanges`
 - **EF Core 9 recusa `Migrate()` quando o modelo tem mudancas sem migration** (`PendingModelChangesWarning`): depois de mexer em entidade ou configuration, gerar a migration (`dotnet ef migrations add`, ver "Comandos Uteis")
-- `EnableRetryOnFailure` (auto-pause do Azure SQL serverless, erro 40613) fica ligado so fora de consumer; dentro dele a resiliencia vem do `UseMessageRetry` (ver "Mensageria")
+- Resiliencia a falha transitoria: `AddDbContext` usa `EnableRetryOnFailure` (`DependencyInjection.cs`), porque o Azure SQL Database serverless "pausa" apos periodo ocioso (erro 40613) e a primeira conexao depois da pausa (cold start) pode falhar sem o retry. Fica ligado so fora de consumer; dentro dele a resiliencia vem do `UseMessageRetry` (ver "Mensageria")
 - Testes de integracao com EF Core 9: o `AddDbContext` acumula `IDbContextOptionsConfiguration<T>`, entao o `CustomWebApplicationFactory` remove essa configuracao (alem de `DbContextOptions<T>`) antes de registrar o InMemory
-- Em Production a API nunca migra sozinha: quem aplica o esquema e o job `deploy-to-aks` (`dotnet ef database update`, ver "CI/CD"). Migration aplicada automaticamente no startup (Program.cs, apenas em Development) — roda contra qualquer um dos dois bancos acima, ja que o docker-compose mantem `ASPNETCORE_ENVIRONMENT=Development`
+- Migration aplicada automaticamente no startup (Program.cs, apenas em Development): roda contra o banco local do docker-compose, que mantem `ASPNETCORE_ENVIRONMENT=Development`. No AKS, `ASPNETCORE_ENVIRONMENT=Production` desliga esse gate (a API nunca migra sozinha em Production), e quem aplica o esquema, uma vez por deploy, e o step "Aplicar migrations" do job `deploy-to-aks` (`dotnet ef database update`, ver "CI/CD" e `docs/adr/0002-migrations-via-step-explicito-no-ci.md`)
 - No Docker Compose, a connection string do `sqlserver` local e montada direto no `docker-compose.yml` (usuario `sa`, senha vinda de `MSSQL_SA_PASSWORD` no `.env`) — nao ha mais dependencia do Azure SQL pra desenvolvimento local
 - `appsettings.json`/`appsettings.Development.json` tem a senha vazia (`Password=;`) na connection string — nunca commitar a senha real ali, o `.env`/`docker-compose.yml` sempre tem precedencia quando rodando via `docker compose`
 - O `.env` tambem carrega as demais credenciais usadas pelo `docker-compose.yml` (nenhuma fica hardcoded no arquivo versionado): `MSSQL_SA_PASSWORD` (SQL Server local), `RABBITMQ_DEFAULT_USER`/`RABBITMQ_DEFAULT_PASS` (RabbitMQ local; **obrigatorias: o compose usa `${VAR:?}` e nao sobe sem elas; adicionar ao `.env` existente**, ver `.env.example`), `GRAFANA_ADMIN_PASSWORD` (Grafana local), `SONAR_DB_USER`/`SONAR_DB_PASSWORD` (Postgres do SonarQube) e `SONAR_ADMIN_PASSWORD` (senha definida pro admin do SonarQube no primeiro boot, via `sonar-setup`)
@@ -434,7 +446,7 @@ removidos junto com o Prometheus/Grafana/Loki/Alloy/Jaeger do AKS, substituidos 
 
 ### `k8s/mailpit/`
 
-- **`deployment.yaml`**: `mailpit` (imagem `axllent/mailpit:v1.30.4`, versao fixada), 1 replica - SMTP de demonstracao, sem persistencia (mesmo papel do
+- **`deployment.yaml`**: `mailpit` (imagem `axllent/mailpit:v1.31.0`, versao fixada, a mesma do `docker-compose.yml`), 1 replica - SMTP de demonstracao, sem persistencia (mesmo papel do
   `docker-compose.yml`, agora tambem no AKS, para demonstrar o fluxo de e-mail sem SMTP externo). Endurecido como a API: `runAsNonRoot` (UID 65532, a imagem e
   `scratch`), `readOnlyRootFilesystem` com `emptyDir` em `/tmp` (o Mailpit guarda um SQLite ali), `drop: ["ALL"]`, `seccompProfile: RuntimeDefault`
   (validado em Docker: sobe e recebe e-mail por SMTP).
@@ -484,7 +496,7 @@ Autenticacao no Azure so por **OIDC** (`OficinaMecanica.Infra/github_oidc/`), se
 `Migrations`, `Program.cs`, `DependencyInjection*` e as EF Configurations (`Data/Configurations`). `[ExcludeFromCodeCoverage]` e proibido sem ADR (o coverlet o honra e o codigo some das duas
 medicoes; o `cobertura.sh` lista as ocorrencias). `CompilerGeneratedAttribute` nao entra em `coverage.runsettings` de proposito (inflaria o numero).
 
-**Medicao integrada (F3b + F3c + F7, 2026-11-08)**: `bash scripts/ci-local.sh` completo verde com o BDD nas fases de teste; testes Contracts 71, Domain 145, Application 298, Integration 112, Infrastructure 416 (354 sem Docker + 62 `Category=Infra`), Bdd 12, 1054 no total. Cobertura de linhas mesclada: **bruta 96,3%** (6225/6460) e **95,2% com as exclusoes documentadas** (3336/3504); `testar-scripts.sh`: 78 casos e 38 mutantes; `docs/openapi.json` regenerado com a rota `GET /api/ordens-de-servico/{id}/execucao`. As medicoes por fase abaixo ficam como registro de cada uma.
+**Medicao integrada (F3b + F3c + F7, mais a integracao do `origin/release`, 2026-11-08)**: `bash scripts/ci-local.sh` completo verde com o BDD nas fases de teste; testes Contracts 71, Domain 145, Application 301, Integration 114, Infrastructure 416 (354 sem Docker + 62 `Category=Infra`), Bdd 12, 1059 no total (os 5 testes novos vieram do `release`: `MetricasNegocioEventHandlersTests`, `MetricasDeNegocioBackgroundServiceTests` e `JsonWebKeySetRetrieverTests`). Cobertura de linhas mesclada: **bruta 96,40%** (6231/6464) e **95,27% com as exclusoes documentadas** (3342/3508); `testar-scripts.sh`: 78 casos e 38 mutantes; `docs/openapi.json` regenerado com a rota `GET /api/ordens-de-servico/{id}/execucao`. As medicoes por fase abaixo ficam como registro de cada uma.
 
 **Medicao da F7 isolada (2026-11-08)**: testes Contracts 71, Domain 145, Application 287, Integration 97, Infrastructure 326 (267 sem Docker + 59 `Category=Infra`), 926 no total. Cobertura de linhas mesclada (todos os projetos de teste, inclusive Infra): **bruta 95,7%** (5840/6098; Application 96,4%, Infrastructure 97,7%, Domain 90,6%, API 74,4%, Contracts 100%) e **93,9% com as exclusoes documentadas** (2957/3149). `bash scripts/ci-local.sh` completo verde em 9 min 13 s; `testar-scripts.sh`: 78 casos e 38 mutantes detectados; `actionlint` e `shellcheck` limpos. Mutacoes provadas numa copia fora do repo: apagar a chamada do gate em `cobertura.sh` reprova o `testar-scripts`; uma action de terceiros no job com `id-token` reprova o `verificar-workflow.sh` e o `testar-scripts`; remover `Trava.WaitAsync` do `HealthCheckComCache`, `tentativa.WaitAsync` do `RabbitMqHealthCheck` ou o `when (!cancellationToken.IsCancellationRequested)` do `SqlServerHealthCheck` faz os testes FALHAREM (em 13 s, 53 s e 14 s no total; nenhum trava).
 
