@@ -223,7 +223,7 @@ assinatura Azure for Students.
 
 Os manifests da aplicacao ficam no diretorio [k8s/](k8s/), organizados por
 assunto. Em condicoes normais eles sao aplicados automaticamente pelo
-pipeline de CI/CD a cada push na `main` (ver [CI/CD](#cicd)) — os passos
+pipeline de CI/CD a cada push na `main` ou `release` (ver [CI/CD](#cicd)) — os passos
 abaixo servem pra rodar o mesmo deploy manualmente (primeira vez, ou fora do
 pipeline).
 
@@ -235,8 +235,15 @@ Pre-requisitos: infraestrutura ja provisionada (secao [Infraestrutura](#infraest
 # Autentica o kubectl local contra o cluster AKS (baixa o kubeconfig)
 az aks get-credentials --resource-group rgfiap --name aksfiap
 
-# Aplica os manifests da API (Deployment, Service, Ingress, HPA, SecretProviderClass)
-kubectl apply -f k8s/oficinamecanica-api/
+# SecretProviderClass primeiro: o pod monta o volume CSI ao iniciar e, sem ele, fica em ContainerCreating
+kubectl apply -f k8s/oficinamecanica-api/secret-provider-class.yaml
+
+# Demais manifests da API (Service, Ingress, HPA), sem placeholder
+kubectl apply -f k8s/oficinamecanica-api/service.yaml -f k8s/oficinamecanica-api/ingress.yaml -f k8s/oficinamecanica-api/hpa.yaml
+
+# O deployment.yaml tem "image: ${IMAGE}" (o CI o renderiza com a imagem do commit); aplicado sem substituir, o pod
+# falha com nome de imagem invalido, de proposito. Renderize com envsubst e aplique:
+IMAGE=acrfiap.azurecr.io/oficinamecanica-api:<sha-do-commit> envsubst '${IMAGE}' < k8s/oficinamecanica-api/deployment.yaml | kubectl apply -f -
 
 # Aplica o Mailpit (SMTP de desenvolvimento, dentro do proprio cluster)
 kubectl apply -f k8s/mailpit/
@@ -250,10 +257,10 @@ kubectl get pods
 
 | Arquivo | Recurso | Finalidade |
 |---------|---------|------------|
-| `deployment.yaml` | Deployment | Gerencia os pods da API (imagem publicada no Azure Container Registry) |
+| `deployment.yaml` | Deployment | Gerencia os pods da API (imagem do Azure Container Registry, tag do commit, entra pelo placeholder `${IMAGE}`) |
 | `service.yaml` | Service (ClusterIP) | Expõe os pods internamente ao cluster |
 | `ingress.yaml` | Ingress | Roteamento externo via ingress-nginx |
-| `hpa.yaml` | HorizontalPodAutoscaler | Escala de 2 a 5 replicas por CPU/memoria |
+| `hpa.yaml` | HorizontalPodAutoscaler | Escala de 1 a 2 replicas por CPU/memoria |
 | `secret-provider-class.yaml` | SecretProviderClass | Lê os segredos da aplicação direto do Key Vault e sincroniza para um Secret nativo |
 
 A credencial sensível (connection string do banco) fica no Azure Key Vault
@@ -264,7 +271,7 @@ para o Secret nativo `oficinamecanica-secrets` automaticamente, assim que o
 Deployment monta o `SecretProviderClass` como volume:
 
 ```bash
-kubectl apply -f k8s/oficinamecanica-api/
+kubectl apply -f k8s/oficinamecanica-api/secret-provider-class.yaml
 ```
 
 ### `k8s/mailpit/`
@@ -329,7 +336,7 @@ fisicamente isolado (sem namespace separado, sem réplica dedicada).
 
 Essa é uma limitação real de recurso, não uma escolha de melhor prática: o
 cluster roda num node único, sem CPU sobrando pra manter uma segunda
-instância da aplicação (nem reduzindo réplicas — já rodam só 2 hoje, ver
+instância da aplicação (nem reduzindo réplicas — o HPA já vai de 1 a 2, ver
 [Kubernetes](#kubernetes)). Num cenário real de produção, o recomendável
 seria infraestrutura dedicada por ambiente (namespace/node pool próprios,
 banco de dados separado), pra eliminar qualquer risco de um deploy de
@@ -342,7 +349,8 @@ não isolamento de infraestrutura.
 ## CI/CD
 
 O fluxo de deploy e automatizado via GitHub Actions
-([.github/workflows/ci.yml](.github/workflows/ci.yml)), em 3 jobs sequenciais.
+([.github/workflows/ci.yml](.github/workflows/ci.yml)), em 5 jobs encadeados (detalhes e justificativas no
+[ADR 0009](docs/adr/0009-ci-cd-independente-com-gate-de-qualidade.md)).
 Roda automaticamente em todo push/PR pras branches `main` (producao) e
 `release` (homologacao - ver [Ambiente de Homologacao](#ambiente-de-homologacao)),
 ou sob demanda a qualquer momento pelo botao **Run workflow** na aba
@@ -352,23 +360,31 @@ da aplicacao:
 
 ```
 push/PR na main OU release OU disparo manual (Run workflow)
-  -> 1. build-and-test        (restore + build Release + testes Domain/Application/Integration)
+  -> 1. build-and-test        "Build & Test" (build, testes dos scripts, guardrail do MassTransit,
+       |                       kubeconform, OpenAPI em dia, testes com e sem Docker, cobertura >= 80%)
+       v
+     2. quality               "Quality" (SonarCloud com Quality Gate bloqueante)
        |
        | (so segue daqui em push direto na main/release ou disparo manual, nao em PR)
        v
-     2. build-and-push-image  (login no Azure via OIDC, build da imagem, push pro ACR
+     3. scan-image            (build da imagem sem push + scan Trivy; so contents: read)
+       |
+       v
+     4. build-and-push-image  (login no Azure via OIDC, push da MESMA imagem escaneada pro ACR
        |                       com a tag <sha-do-commit> sempre, + "latest" so quando for main)
        v
-     3. deploy-to-aks         (aplica migrations pendentes via dotnet ef, kubectl apply
-                                nos manifests + kubectl set image pro <sha-do-commit> +
-                                kubectl rollout status)
+     5. deploy-to-aks         (aplica migrations pendentes via dotnet ef, kubectl apply
+                                nos manifests renderizados com a imagem do <sha-do-commit> +
+                                kubectl set image + kubectl rollout status)
 ```
 
 | Job | Quando roda | O que faz |
 |-----|-------------|-----------|
-| `build-and-test` | Todo push, PR ou disparo manual | Restore, build, os 3 projetos de teste, publica resultados como Job Summary (`dorny/test-reporter`) e artifact |
-| `build-and-push-image` | So em push direto na `main`/`release` ou disparo manual (nao em PR) | Autentica no Azure (OIDC), publica a imagem no `acrfiap.azurecr.io` com a tag do commit (`github.sha`) sempre, e `latest` só quando o push foi na `main` (evita que um push em `release` sobrescreva o `latest` que reflete produção) |
-| `deploy-to-aks` | Idem, apos o job anterior | Aplica as migrations pendentes do banco (`dotnet ef database update`, buscando a connection string no Key Vault via a mesma sessão OIDC), aplica os manifests de `k8s/` e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
+| `build-and-test` (`Build & Test`, check obrigatorio) | Todo push, PR ou disparo manual | Restore, build, `scripts/testar-scripts.sh`, guardrail do MassTransit, validacao dos manifests (kubeconform), `docs/openapi.json` em dia, os 5 projetos de teste (inclusive os de infraestrutura com Testcontainers), cobertura mesclada com gate de 80%; publica resultados como Job Summary (`dorny/test-reporter`) e artifacts |
+| `quality` (`Quality`, check obrigatorio) | Todo push, PR ou disparo manual (pulado em PR de fork) | SonarCloud com Quality Gate bloqueante, usando o OpenCover do job anterior |
+| `scan-image` | So em push direto na `main`/`release` ou disparo manual (nao em PR) | Constroi a imagem sem push e a escaneia com o Trivy (HIGH/CRITICAL com correcao reprova); roda so com `contents: read` e salva a imagem aprovada como artifact |
+| `build-and-push-image` | Idem, apos o scan | Autentica no Azure (OIDC) e publica no `acrfiap.azurecr.io` a MESMA imagem que o Trivy aprovou, com a tag do commit (`github.sha`) sempre, e `latest` só quando o push foi na `main` (evita que um push em `release` sobrescreva o `latest` que reflete produção) |
+| `deploy-to-aks` | Idem, apos o job anterior | Aplica as migrations pendentes do banco (`dotnet ef database update`, buscando a connection string no Key Vault via a mesma sessão OIDC), aplica os manifests de `k8s/` (o da API renderizado com `envsubst`, que troca `${IMAGE}` pela imagem do commit) e atualiza o Deployment pra imagem recem publicada, aguardando o rollout terminar |
 
 **Migração de banco no CI, não mais no startup da API**: antes disso rodava
 automaticamente sempre que a API iniciava em ambiente `Development`
@@ -380,7 +396,7 @@ no cluster (continua funcionando normalmente em `Development` local via
 Docker Compose) — o job `deploy-to-aks` agora aplica as migrations
 pendentes explicitamente, antes de atualizar a imagem.
 
-**Autenticacao sem secrets de longa duracao**: os jobs 2 e 3 autenticam no
+**Autenticacao sem secrets de longa duracao**: os jobs `build-and-push-image` e `deploy-to-aks` autenticam no
 Azure via **OIDC** (`OficinaMecanica.Infra/github_oidc/`) — o GitHub emite um token de
 identidade de curta duracao a cada execucao do workflow, e o Azure confia
 nele atraves de Federated Identity Credentials restritas a
@@ -407,12 +423,11 @@ projeto nao esta em uso) — decisao consciente de manter o gatilho automatico
 mesmo assim, em vez de exigir uma etapa manual de "religar o cluster" antes
 de todo deploy.
 
-**Fora do pipeline por enquanto**: a analise de qualidade via SonarQube (ver
-[Analise de Qualidade](#analise-de-qualidade-sonarqube)) continua rodando so
-localmente — a instancia atual vive dentro do Docker Compose do
-desenvolvedor, inalcancavel pelo runner do GitHub Actions. Migrar pra uma
-instancia acessivel (ex: SonarCloud) integraria isso ao job
-`build-and-test`. O provisionamento da infraestrutura (Terraform) tambem
+**Qualidade no pipeline**: o job `quality` roda no SonarCloud (precisa do secret
+`SONAR_TOKEN` e das variaveis `SONAR_PROJECT_KEY`/`SONAR_ORGANIZATION` no
+repositorio). A analise via SonarQube local (ver
+[Analise de Qualidade](#analise-de-qualidade-sonarqube)) continua existindo so como
+ferramenta de desenvolvimento, dentro do Docker Compose. O provisionamento da infraestrutura (Terraform) tambem
 continua manual (ver [Infraestrutura](#infraestrutura)) — so o deploy da *aplicacao* e automatizado hoje.
 
 ## Endpoints da API
@@ -432,7 +447,8 @@ As tabelas abaixo resumem as mesmas rotas, agrupadas por area, para referencia r
 ### Observabilidade
 | Metodo | Rota | Autenticado | Descricao |
 |--------|------|:-----------:|-----------|
-| GET | /health | Nao | Health check simples (confirma que o processo esta de pe) |
+| GET | /health | Nao | Liveness: confirma que o processo esta de pe, sem consultar nenhuma dependencia |
+| GET | /health/ready | Nao | Prontidao: consulta o SQL Server (503 se cair) e o RabbitMQ (broker fora = `Degraded`, HTTP 200); corpo JSON com o status de cada check, em cache de 5 s |
 | GET | /metrics | Nao | Metricas no formato Prometheus (`prometheus-net`) - sem scrape no AKS hoje, mantido so pro Prometheus local do docker-compose |
 
 ### Autenticacao

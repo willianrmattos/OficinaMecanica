@@ -1,14 +1,22 @@
+# Defini o teto em 2 replicas e o piso em 1: o no unico do AKS (Standard_D4as_v4) nao tem folga de CPU de requests para
+# mais que isso. Mais de uma replica e segura (o inbox deduplica as mensagens e o sweeper de prazos reivindica as linhas
+# vencidas com UPDLOCK/READPAST, entao duas instancias nunca processam o mesmo prazo).
+# Os percentuais sao sobre o REQUEST do deployment.yaml (CPU 100m, memoria 256Mi): 70% de 100m sao 70m, entao uma rajada
+# de requisicoes ou de mensagens da saga faz a segunda replica subir.
 apiVersion: autoscaling/v2
 kind: HorizontalPodAutoscaler
 metadata:
   name: oficinamecanica-api
+  namespace: default
+  labels:
+    app: oficinamecanica-api
 spec:
   scaleTargetRef:
     apiVersion: apps/v1
     kind: Deployment
     name: oficinamecanica-api
-  minReplicas: 2
-  maxReplicas: 5
+  minReplicas: 1
+  maxReplicas: 2
   metrics:
     - type: Resource
       resource:

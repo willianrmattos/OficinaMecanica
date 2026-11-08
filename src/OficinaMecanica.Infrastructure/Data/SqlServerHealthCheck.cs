@@ -24,9 +24,13 @@ public sealed class SqlServerHealthCheck : IHealthCheck
 
         try
         {
-            return await _db.Database.CanConnectAsync(limite.Token)
-                ? HealthCheckResult.Healthy("Conexão com o banco de dados estabelecida.")
-                : HealthCheckResult.Unhealthy("Não foi possível conectar ao banco de dados.");
+            if (await _db.Database.CanConnectAsync(limite.Token))
+                return HealthCheckResult.Healthy("Conexão com o banco de dados estabelecida.");
+
+            // O CanConnectAsync engole o cancelamento e devolve falso: se quem cancelou foi o chamador (a probe abortou),
+            // propago o cancelamento em vez de relatar um banco fora do ar que nao foi medido.
+            cancellationToken.ThrowIfCancellationRequested();
+            return HealthCheckResult.Unhealthy("Não foi possível conectar ao banco de dados.");
         }
         catch (Exception ex) when (!cancellationToken.IsCancellationRequested)
         {

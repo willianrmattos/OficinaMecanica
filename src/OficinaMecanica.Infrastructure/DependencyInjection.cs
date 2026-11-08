@@ -2,6 +2,7 @@ using MassTransit.DependencyInjection;
 using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Domain.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Infrastructure.Health;
 using OficinaMecanica.Infrastructure.Repositories;
 using OficinaMecanica.Infrastructure.Services;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
@@ -45,8 +46,10 @@ public static class DependencyInjection
                     })
                 .AddInterceptors(provider.GetRequiredService<DomainEventsPosCommitInterceptor>()));
 
-        // Prontidao: sem o banco a API nao aceita escrita, entao so ele tira o pod de rotacao (ver RabbitMqHealthCheck).
-        services.AddHealthChecks().AddCheck<SqlServerHealthCheck>("sqlserver", tags: new[] { "ready" });
+        // Prontidao: sem o banco a API nao aceita escrita, entao so ele tira o pod de rotacao (ver RabbitMqHealthCheck). O
+        // resultado fica em cache por alguns segundos porque /health/ready e anonimo (ver OpcoesDaProntidao).
+        services.AddOptions<OpcoesDaProntidao>().Bind(configuration.GetSection(OpcoesDaProntidao.Secao));
+        services.AddHealthChecks().AddCheckComCache<SqlServerHealthCheck>("sqlserver", failureStatus: null, tags: new[] { "ready" });
 
         // Unit of Work
         services.AddScoped<IUnitOfWork>(provider => provider.GetRequiredService<AppDbContext>());

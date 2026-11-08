@@ -1,21 +1,21 @@
-# Requer um Ingress Controller no cluster - ja instalado via Terraform
-# (OficinaMecanica.Infra/helm/main.tf, helm_release do ingress-nginx).
+# Requer um Ingress Controller no cluster - ja instalado via Terraform (OficinaMecanica.Infra/helm/main.tf, helm_release do
+# ingress-nginx).
 #
-# Deixei sem "host" na regra abaixo de proposito: e uma regra catch-all, que
-# aceita qualquer hostname (ou nenhum) nao reivindicado por outra regra mais
-# especifica - por isso o IP publico do ingress-nginx roteia direto para a
-# API, sem necessidade de dominio. Ja em Grafana/Prometheus
-# (k8s/monitoring/ingress.yaml) usei host especifico porque os dois
-# compartilham o mesmo IP e precisam ser diferenciados.
+# Deixei sem "host" e com o path "/" de proposito: e a regra catch-all, que aceita qualquer hostname (ou nenhum) nao
+# reivindicado por outra regra mais especifica, entao o IP publico do ingress-nginx roteia direto para a API, sem
+# necessidade de dominio. Este servico NAO usa prefixo de path: o Billing (/billing) e a Execucao (/execucao) entram no
+# mesmo ingress-nginx por prefixo, e o ingress-nginx avalia o prefixo mais longo primeiro, entao so o que nao casa com os
+# dois chega aqui.
 #
-# Esse comportamento (bater no IP puro, sem host) e exatamente o que o
-# Azure API Management (OficinaMecanica.Infra/apim/) usa como "service_url" - a APIM ficou
-# na frente disso como novo front door pros clientes da API, mas continua
-# chamando esse Ingress por baixo, sem mudar nada aqui.
+# Esse comportamento (bater no IP puro, sem host) e exatamente o que o Azure API Management (OficinaMecanica.Infra/apim/, rota
+# "oficinaserver") usa como service_url: a APIM e o front door dos clientes, e continua chamando este Ingress por baixo.
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
   name: oficinamecanica-api
+  namespace: default
+  labels:
+    app: oficinamecanica-api
 spec:
   ingressClassName: nginx
   rules:

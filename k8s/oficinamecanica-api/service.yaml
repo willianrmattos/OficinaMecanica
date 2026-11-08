@@ -1,7 +1,10 @@
+# ClusterIP: a API so e alcancada pelo ingress-nginx (e, por ele, pela APIM); nada expoe o pod direto na internet. A porta
+# e nomeada (http) porque o deployment.yaml referencia as probes por nome.
 apiVersion: v1
 kind: Service
 metadata:
   name: oficinamecanica-api
+  namespace: default
   labels:
     app: oficinamecanica-api
 spec:

@@ -4,5 +4,17 @@
 **/node_modules/
 **/.git/
 **/tests/
+**/TestResults/
+**/coverage/
+.claude/
+.github/
+k8s/
+scripts/
+artifacts/
+.config/
+docs/
 *.md
+.env
+.env.*
+!.env.example
 .dockerignore

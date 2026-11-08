@@ -8,6 +8,7 @@ using Microsoft.Extensions.Options;
 using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Domain.Exceptions;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Infrastructure.Health;
 
 namespace OficinaMecanica.Infrastructure.Messaging;
 
@@ -43,8 +44,12 @@ public static class MensageriaExtensions
         var usaRabbitMq = opcoes.UsaRabbitMq;
         var usaOutboxDoEf = opcoes.UsaOutboxDoEntityFramework;
 
+        // Broker fora e Degraded (HTTP 200 em /health/ready): com o outbox a API continua aceitando escrita.
         if (usaRabbitMq)
-            services.AddHealthChecks().AddCheck<RabbitMqHealthCheck>("rabbitmq", tags: new[] { "ready" });
+        {
+            services.AddHealthChecks().AddCheckComCache<RabbitMqHealthCheck>(
+                "rabbitmq", failureStatus: HealthStatus.Degraded, tags: new[] { "ready" });
+        }
 
         // O check do bus que o MassTransit registra tambem nao pode tirar o pod de rotacao por causa do broker, mesmo
         // que um dia ele passe a reportar a falta de conexao: rebaixo a falha dele para Degraded.

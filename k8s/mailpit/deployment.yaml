@@ -1,3 +1,5 @@
+# SMTP de demonstracao dentro do cluster: captura os e-mails da API sem entregar nada para fora (UI web na porta 8025, via
+# ingress.yaml). Nao e ponto de entrega de producao.
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -6,6 +8,7 @@ metadata:
     app: mailpit
 spec:
   replicas: 1
+  revisionHistoryLimit: 3
   selector:
     matchLabels:
       app: mailpit
@@ -15,14 +18,29 @@ spec:
         app: mailpit
     spec:
       automountServiceAccountToken: false
+      # A imagem e "scratch" (sem /etc/passwd), entao o usuario e so numerico; 65532 e o "nonroot" convencional. As portas
+      # 1025 e 8025 sao altas, nao precisam de privilegio. Validei local: com root somente leitura, /tmp gravavel, todas as
+      # capabilities removidas e este UID, o Mailpit sobe e recebe e-mail por SMTP.
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
       containers:
         - name: mailpit
-          image: axllent/mailpit:latest
+          # Fixei a versao (e nao "latest") para o pod nao mudar de comportamento quando a imagem for republicada.
+          image: axllent/mailpit:v1.30.4
           ports:
             - name: smtp
               containerPort: 1025
             - name: http
               containerPort: 8025
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
           readinessProbe:
             tcpSocket:
               port: 8025
@@ -41,3 +59,12 @@ spec:
             limits:
               memory: 64Mi
               ephemeral-storage: 128Mi
+          volumeMounts:
+            # O Mailpit guarda as mensagens num banco SQLite em /tmp; sem este volume o root somente leitura o derrubaria na
+            # partida.
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 64Mi

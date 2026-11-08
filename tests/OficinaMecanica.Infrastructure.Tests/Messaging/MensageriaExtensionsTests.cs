@@ -11,6 +11,7 @@ using Microsoft.Extensions.Options;
 using OficinaMecanica.Application;
 using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Infrastructure.Health;
 using OficinaMecanica.Infrastructure.Messaging;
 using OficinaMecanica.Infrastructure.Tests.Support;
 
@@ -99,7 +100,23 @@ public class MensageriaExtensionsTests
         var registros = provedor.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations.ToDictionary(r => r.Name);
 
         registros["masstransit-bus"].FailureStatus.Should().Be(HealthStatus.Degraded);
+        registros["rabbitmq"].FailureStatus.Should().Be(HealthStatus.Degraded);
         registros["sqlserver"].FailureStatus.Should().Be(HealthStatus.Unhealthy);
+    }
+
+    [Fact]
+    public async Task AddMensageria_BancoEBroker_DevemRodarDentroDoCacheDeProntidao_MasOBusDoMassTransitNao()
+    {
+        await using var provedor = CriarProvedor(ConfiguracaoDeTeste.Criar(("Mensageria:Transporte", "RabbitMq")));
+        using var escopo = provedor.CreateScope();
+        var registros = provedor.GetRequiredService<IOptions<HealthCheckServiceOptions>>().Value.Registrations.ToDictionary(r => r.Name);
+
+        registros["sqlserver"].Factory(escopo.ServiceProvider).Should().BeOfType<HealthCheckComCache>(
+            "/health/ready e anonimo e cada avaliacao abre uma conexao SQL");
+        registros["rabbitmq"].Factory(escopo.ServiceProvider).Should().BeOfType<HealthCheckComCache>(
+            "e cada avaliacao abre uma conexao AMQP");
+        registros["masstransit-bus"].Factory(escopo.ServiceProvider).Should().NotBeOfType<HealthCheckComCache>(
+            "o check do bus nao abre conexao nova");
     }
 
     [Fact]

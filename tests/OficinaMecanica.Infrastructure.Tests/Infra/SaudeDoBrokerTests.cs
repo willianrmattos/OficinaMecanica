@@ -51,7 +51,9 @@ public class SaudeDoBrokerTests
             ["RabbitMq__Port"] = rabbit.GetMappedPublicPort(5672).ToString(),
             ["RabbitMq__VirtualHost"] = "/",
             ["RabbitMq__Username"] = usuario,
-            ["RabbitMq__Password"] = senha
+            ["RabbitMq__Password"] = senha,
+            // Sem cache de prontidao: o teste derruba e restaura as dependencias e espera ver cada mudanca na hora.
+            ["Health__ProntidaoCacheSegundos"] = "0"
         });
         await using var factory = new WebApplicationFactory<Program>().WithWebHostBuilder(builder => builder.UseEnvironment("Development"));
         using var client = factory.CreateClient();
