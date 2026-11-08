@@ -153,8 +153,10 @@ app.Use((context, next) =>
 });
 
 // Middleware
-app.UseMiddleware<ExceptionHandlingMiddleware>();
+// UseHttpMetrics fica por fora do middleware de excecoes: ele le o status quando a resposta ja foi montada, entao o
+// 404/409/500 e o 499 mapeados ali aparecem nas metricas com o codigo real (por dentro, tudo contaria como 200).
 app.UseHttpMetrics();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 // Auto-migrate in development
 if (app.Environment.IsDevelopment())
