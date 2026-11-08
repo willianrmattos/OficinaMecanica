@@ -19,7 +19,11 @@ resposta. Estados, transicoes e compensacoes estao em `docs/saga-maquina-de-esta
 
 Regras que a decisao impoe:
 - toda etapa com efeito colateral tem compensacao (estoque, orcamento, pagamento/estorno,
-  producao); a compensacao e retentavel ate dar certo e nunca e silenciosamente descartada;
+  producao); a compensacao nunca e descartada em silencio. "Retentavel" significa retry do
+  endpoint de destino mais redrive manual da fila `_error` (o comando tem id deterministico,
+  entao reprocessar e idempotente): a saga NAO reenvia sozinha, porque reenvio automatico viraria
+  loop com mensagem venenosa, e permanece no estado de compensacao (ex.: `CancelandoPagamento`),
+  com log de erro estruturado, ate o comando ser processado e a resposta chegar (ADR 0008);
 - falha de negocio vira evento explicito (`OrcamentoNaoGerado`, `ExecucaoInviavel`);
   `Fault<T>` e so falha tecnica;
 - timeout de prazo (aprovacao e pagamento) cancela; timeout de diagnostico/reparo so alerta
@@ -36,6 +40,18 @@ Regras que a decisao impoe:
 - `CancelarPagamento` tambem cancela o orcamento se ele estiver `Aprovado` (nunca `Pago`);
 - os estados de compensacao (`CancelandoPagamento`, `Estornando`) tem SLA so de alerta (metrica
   de saga presa); nenhuma decisao automatica se o Billing demorar a responder.
+
+Implementacao (F3b): a maquina de estados esta em `Infrastructure/Saga` e os detalhes (prazos e
+sweeper, `PrazoId` vigente, eventos duplicados, tardios e antecipados, `Fault<T>` por comando, ids
+deterministicos dos comandos) estao no ADR 0008. Tres pontos refinam o que este ADR e o plano
+inicial diziam: (1) evento que chega ANTES de a saga existir nao e descartado
+(`OnMissingInstance(Discard)`): ele falha e o retry do endpoint o reprocessa, porque descartar
+deixaria a OS sem andar; so evento sem transicao no estado atual e ignorado; (2) o diagrama ganhou
+as transicoes de `Fault<T>`, a do `DiagnosticoConcluido` que chega antes do `DiagnosticoIniciado` e a
+do cancelamento do staff durante `CancelandoPagamento`; (3) o `Fault<T>` de um comando de compensacao
+(`CancelarPagamento`, `CancelarOrcamento`, `CancelarProducao`) so gera log de erro estruturado: nao ha
+reenvio automatico nem transicao, a saga fica onde estava e o comando falho espera na `_error` do destino
+pelo redrive manual (runbook no ADR 0008). A metrica de saga presa / compensacao falhou entra junto das demais metricas da saga (fase de codigo seguinte); dashboard e alerta (NRQL) ficam para a documentacao final. Ate la o alerta e o log de erro.
 
 ## Consequencias
 ### Positivas

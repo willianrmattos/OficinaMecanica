@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using OficinaMecanica.Application.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.Infrastructure.Messaging;
+using OficinaMecanica.Infrastructure.Saga;
 using OficinaMecanica.Integration.Tests.Fakes;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Hosting;
@@ -42,6 +43,10 @@ public class CustomWebApplicationFactory : WebApplicationFactory<Program>
         // ConfigureAppConfiguration), porque o Program le a configuracao antes de este factory acrescentar fontes.
         builder.UseSetting($"{OpcoesDaMensageria.Secao}:{nameof(OpcoesDaMensageria.Transporte)}", nameof(TransporteDaMensageria.EmMemoria));
         builder.UseSetting($"{OpcoesDaMensageria.Secao}:{nameof(OpcoesDaMensageria.Persistencia)}", nameof(PersistenciaDaMensageria.Nenhuma));
+
+        // A saga sobe junto (repositorio em memoria, por causa da persistencia Nenhuma), mas o sweeper de prazos nao tem o que
+        // varrer aqui: o publicador e um fake e nenhuma mensagem chega ao bus.
+        builder.UseSetting($"{SagaOptions.Secao}:{nameof(SagaOptions.SweeperHabilitado)}", "false");
 
         builder.ConfigureServices(services =>
         {

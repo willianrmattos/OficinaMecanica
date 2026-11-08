@@ -1,4 +1,5 @@
 using Microsoft.Data.SqlClient;
+using RabbitMQ.Client;
 using Testcontainers.MsSql;
 using Testcontainers.RabbitMq;
 
@@ -27,12 +28,12 @@ public sealed class InfraFixture : IAsyncLifetime
         var sufixo = Guid.NewGuid().ToString("N")[..8];
 
         _sql = new MsSqlBuilder(ImagensDeInfra.SqlServer)
-            .WithName($"os-f3a-sql-{sufixo}")
+            .WithName($"os-f3b-sql-{sufixo}")
             .WithEnvironment("MSSQL_MEMORY_LIMIT_MB", "1024")
             .Build();
 
         _rabbit = new RabbitMqBuilder(ImagensDeInfra.RabbitMq)
-            .WithName($"os-f3a-rabbit-{sufixo}")
+            .WithName($"os-f3b-rabbit-{sufixo}")
             .WithUsername(Usuario)
             .WithPassword(Senha)
             .Build();
@@ -76,6 +77,60 @@ public sealed class InfraFixture : IAsyncLifetime
             throw new InvalidOperationException($"Nao consegui criar o virtual host {nome}: {criacao.Stderr} {permissao.Stderr}");
 
         return nome;
+    }
+
+    // Nomes das filas que existem no virtual host (o RabbitMQ so as cria quando alguem as declara).
+    public async Task<IReadOnlyList<string>> FilasAsync(string virtualHost)
+    {
+        var resultado = await _rabbit.ExecAsync(new[] { "rabbitmqctl", "list_queues", "-p", virtualHost, "name", "--formatter", "csv", "--silent" });
+        return resultado.Stdout
+            .Split('\n', StringSplitOptions.RemoveEmptyEntries)
+            .Select(l => l.Trim().Trim('"'))
+            .Where(l => l.Length > 0 && l != "name")
+            .ToList();
+    }
+
+    // Redrive manual: devolve a fila de comandos todas as mensagens da "<fila>_error", com o corpo e as propriedades intactos
+    // (message_id inclusive), que e o que um shovel faria pelo Management UI. Devolve quantas moveu.
+    public async Task<int> RedriveDaFilaDeErroAsync(string virtualHost, string fila)
+    {
+        var fabrica = new ConnectionFactory
+        {
+            HostName = RabbitHost,
+            Port = RabbitPort,
+            VirtualHost = virtualHost,
+            UserName = RabbitUsuario,
+            Password = RabbitSenha
+        };
+
+        await using var conexao = await fabrica.CreateConnectionAsync();
+        await using var canal = await conexao.CreateChannelAsync();
+
+        // Limito ao que ja estava na fila quando o redrive comeca: se o destino voltasse a falhar e devolvesse a mensagem
+        // a "_error", o laco nao giraria para sempre.
+        var presentes = (await canal.QueueDeclarePassiveAsync($"{fila}_error")).MessageCount;
+        var movidas = 0;
+        while (movidas < presentes && await canal.BasicGetAsync($"{fila}_error", autoAck: false) is { } mensagem)
+        {
+            var original = mensagem.BasicProperties;
+            var propriedades = new BasicProperties
+            {
+                MessageId = original.MessageId,
+                CorrelationId = original.CorrelationId,
+                ContentType = original.ContentType,
+                ContentEncoding = original.ContentEncoding,
+                DeliveryMode = original.DeliveryMode,
+                Headers = original.Headers,
+                Timestamp = original.Timestamp,
+                Type = original.Type
+            };
+
+            await canal.BasicPublishAsync(exchange: string.Empty, routingKey: fila, mandatory: false, basicProperties: propriedades, body: mensagem.Body);
+            await canal.BasicAckAsync(mensagem.DeliveryTag, multiple: false);
+            movidas++;
+        }
+
+        return movidas;
     }
 
     // Mensagens que o RabbitMQ guarda na fila (inclusive as nao consumidas), lidas pelo rabbitmqctl.

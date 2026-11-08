@@ -40,12 +40,14 @@ public sealed class AmbienteDeInfra : IAsyncDisposable
         InfraFixture infra,
         Action<IBusRegistrationConfigurator>? registrarConsumers = null,
         Action<IBusRegistrationContext, IReceiveConfigurator>? configurarEndpoints = null,
-        Action<IServiceCollection>? ajustarServicos = null)
+        Action<IServiceCollection>? ajustarServicos = null,
+        IEnumerable<(string Chave, string? Valor)>? configuracaoExtra = null,
+        Action<IServiceCollection, IConfiguration>? compor = null)
     {
         var connectionString = await infra.CriarBancoAsync();
         var virtualHost = await infra.CriarVirtualHostAsync();
 
-        var configuracao = new ConfigurationBuilder().AddInMemoryCollection(new Dictionary<string, string?>
+        var valoresDaConfiguracao = new Dictionary<string, string?>
         {
             ["ConnectionStrings:DefaultConnection"] = connectionString,
             ["JwtSettings:Issuer"] = "OficinaMecanica.Seguranca",
@@ -61,7 +63,10 @@ public sealed class AmbienteDeInfra : IAsyncDisposable
             ["Mensageria:RetryIntervalosMs:1"] = "50",
             ["Mensageria:RetryIntervalosMs:2"] = "50",
             ["Mensageria:OutboxQueryDelayMs"] = "100"
-        }).Build();
+        };
+        foreach (var (chave, valor) in configuracaoExtra ?? Enumerable.Empty<(string, string?)>())
+            valoresDaConfiguracao[chave] = valor;
+        var configuracao = new ConfigurationBuilder().AddInMemoryCollection(valoresDaConfiguracao).Build();
 
         var emails = new RegistroDeEmails();
         var logs = new LoggerCapturador();
@@ -83,6 +88,7 @@ public sealed class AmbienteDeInfra : IAsyncDisposable
         builder.Services.AddSingleton<IEmailService>(emails);
         builder.Services.AddSingleton(consumo);
         ajustarServicos?.Invoke(builder.Services);
+        compor?.Invoke(builder.Services, configuracao);
 
         var host = builder.Build();
 

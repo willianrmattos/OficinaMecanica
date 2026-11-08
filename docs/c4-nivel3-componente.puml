@@ -10,6 +10,7 @@ Person(admin, "Administrador", "Usuario autenticado")
 Person_Ext(cliente, "Cliente Final", "Acesso anonimo")
 ContainerDb_Ext(db, "OficinaMecanicaDb", "Azure SQL Database")
 System_Ext(smtp, "Servidor SMTP", "Mailpit (dev)")
+System_Ext(rabbit, "RabbitMQ", "Broker do ecossistema; Billing e Execucao respondem a saga por ele")
 
 Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 
@@ -19,11 +20,11 @@ Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 
     Component(pipeline, "ValidationBehavior", "MediatR IPipelineBehavior", "Intercepta todo Command e Query. Executa FluentValidation e lanca ValidationException se invalido.")
 
-    Component(cmdHandlers, "Command Handlers", "MediatR IRequestHandler (escrita)", "CriarCliente, AtualizarCliente, RemoverCliente, CriarVeiculo, AtualizarVeiculo, RemoverVeiculo, CriarServico, AtualizarServico, DesativarServico, CriarPeca, AtualizarPeca, DesativarPeca, AdicionarEstoquePeca, CriarOrdemDeServico, AtualizarStatusOrdem, AprovarOrcamento, RecusarOrcamento.")
+    Component(cmdHandlers, "Command Handlers", "MediatR IRequestHandler (escrita)", "CriarCliente, AtualizarCliente, RemoverCliente, CriarVeiculo, AtualizarVeiculo, RemoverVeiculo, CriarServico, AtualizarServico, DesativarServico, CriarPeca, AtualizarPeca, DesativarPeca, AdicionarEstoquePeca, CriarOrdemDeServico, AtualizarStatusOrdem (so Entregue), AprovarOrcamento, RecusarOrcamento e CancelarOrdemDeServico (so validam e publicam a decisao para a saga, resposta 202), mais os commands internos idempotentes que a saga chama: MarcarDiagnosticoIniciado, RegistrarOrcamentoGerado, ReservarEstoque, LiberarEstoque, AplicarAprovacaoDoOrcamento, AplicarRecusaDoOrcamento, RegistrarPagamentoSolicitado, IniciarExecucaoDaOrdem, FinalizarOrdem, CancelarOrdemPelaSaga.")
 
     Component(qryHandlers, "Query Handlers", "MediatR IRequestHandler (leitura)", "ObterCliente, ListarClientes, ObterClientePorDocumento, ObterVeiculo, ListarVeiculos, ObterServico, ListarServicos, ObterPeca, ListarPecas, ObterOrdemDeServico, ListarOrdensDeServico (exclui Finalizada/Entregue por padrao, ordena por prioridade de status), ObterTempoMedioServicos.")
 
-    Component(aggregates, "Agregados (DDD)", "Domain Entities / AggregateRoot", "Cliente, Veiculo, OrdemDeServico, Servico, Peca. Encapsulam invariantes e regras de negocio. Fluxo de status da OS controlado pelo dominio (Recebida ate Entregue, com o desvio AguardandoAprovacao -> OrcamentoRecusado). Baixa automatica de estoque ao aprovar orcamento (nao ocorre ao recusar).")
+    Component(aggregates, "Agregados (DDD)", "Domain Entities / AggregateRoot", "Cliente, Veiculo, OrdemDeServico, Servico, Peca. Encapsulam invariantes e regras de negocio. Fluxo de status da OS controlado pelo dominio (Recebida ate Entregue, com o desvio AguardandoAprovacao -> OrcamentoRecusado). Estoque reservado pela saga na aprovacao do orcamento, antes do pagamento (nao na criacao); liberado nas compensacoes. Fluxo completo da OS em docs/saga-maquina-de-estados.puml.")
 
     Component(valueObjects, "Value Objects", "Domain ValueObject", "Documento: valida CPF e CNPJ com algoritmo de digitos verificadores. Placa: valida formato antigo (ABC1234) e Mercosul (ABC1D23).")
 
@@ -35,7 +36,15 @@ Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 
     Component(repos, "Repositories", "EF Core / IRepository", "ClienteRepository, VeiculoRepository, ServicoRepository, PecaRepository, OrdemDeServicoRepository. Implementam interfaces definidas no dominio.")
 
-    Component(dbctx, "AppDbContext / IUnitOfWork", "Entity Framework Core 8", "Configuracoes Fluent API com ConcurrencyToken. Gerencia transacoes ACID. Publica Domain Events via IMediator apos SaveChangesAsync.")
+    Component(dbctx, "AppDbContext / IUnitOfWork", "Entity Framework Core 9", "Configuracoes Fluent API com ConcurrencyToken. Gerencia transacoes ACID. Publica Domain Events via IMediator apos SaveChangesAsync (depois do COMMIT quando ha transacao do MassTransit). Hospeda tambem o estado da saga (OrdemDeServicoSagas), os prazos (SagaPrazos) e o outbox/inbox do MassTransit.")
+
+    Component(bus, "MassTransit + outbox/inbox", "MassTransit 8.5.12 (Infrastructure/Messaging)", "AddMensageria: bus RabbitMQ, outbox transacional (UseBusOutbox) e inbox por endpoint. Endpoint os-saga com retry por fora e outbox por dentro (ConfigurarRetryEOutbox). Mensagens de integracao saem por IIntegrationEventPublisher, antes do SaveChanges.")
+
+    Component(saga, "OrdemDeServicoStateMachine", "MassTransitStateMachine (Infrastructure/Saga)", "Orquestrador da OS, correlacionado pelo OrdemDeServicoId: 9 estados ativos e 3 finais, ignora o que nao tem transicao, falha o evento que chega antes da saga e compensa por Fault<T>. Repositorio EF Pessimistic.")
+
+    Component(activities, "Activities da saga", "IStateMachineActivity (Infrastructure/Saga/Activities)", "Uma por passo com efeito colateral: chamam um command idempotente da Application no mesmo escopo e transacao, enviam o comando ao Billing ou a Execucao (Send, MessageId deterministico) e agendam prazos.")
+
+    Component(sweeper, "SweeperDePrazos", "BackgroundService (Infrastructure/Saga)", "Reivindica prazos vencidos de SagaPrazos com UPDLOCK, READPAST e INDEX e publica PrazoExpirado pelo outbox na mesma transacao. Nunca escreve na linha da saga; varias replicas sao seguras.")
 }
 
 Rel_D(admin, middleware, "Requisicoes autenticadas (JWT Bearer)", "HTTPS")
@@ -55,5 +64,14 @@ Rel_D(dbctx, db, "Le e escreve via EF Core", "SQL / TDS 1433")
 Rel_D(domainEvents, eventHandlers, "Despacha StatusOrdemAlteradoEvent", "IMediator.Publish")
 Rel(eventHandlers, emailSvc, "Envia notificacao", "IEmailService")
 Rel_R(emailSvc, smtp, "Conecta e envia", "SMTP")
+Rel(rabbit, bus, "Entrega eventos da saga (Billing, Execucao, prazos)", "AMQP")
+Rel(bus, rabbit, "Entrega comandos e eventos do outbox", "AMQP")
+Rel(bus, saga, "Consome pela fila os-saga (inbox)")
+Rel(saga, activities, "Executa os passos de cada transicao")
+Rel(activities, cmdHandlers, "Commands internos idempotentes", "IMediator.Send")
+Rel(activities, bus, "Send de comandos ao Billing e a Execucao (outbox)")
+Rel(saga, dbctx, "Estado e prazos na mesma transacao")
+Rel(sweeper, bus, "Publica PrazoExpirado (outbox)")
+Rel(sweeper, dbctx, "Claim de SagaPrazos", "SQL com UPDLOCK, READPAST")
 
 @enduml

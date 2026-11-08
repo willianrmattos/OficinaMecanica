@@ -76,8 +76,8 @@ valendo **dentro** de cada servico (e-mail e metricas).
 |---|---|---|
 | Saga orquestrada, MassTransit 8 gratuito, contratos por copia | ADR 0003, 0004, 0005 (este repositorio) | Junto com este RFC |
 | Quebras de API e matriz sincrono x assincrono | ADR 0006 (este repositorio) | Junto com este RFC |
-| Outbox/inbox transacional e publicacao antes do commit; sweeper de prazos | ADRs neste repositorio | Depois de validar o desenho com a implementacao da Saga no OS Service |
+| Outbox/inbox transacional e publicacao antes do commit; sweeper de prazos e estados da saga | ADR 0007 e ADR 0008 (este repositorio) | Escritos depois de validar o desenho com a implementacao (F3a e F3b) |
 | Mercado Pago (Checkout Pro, webhook, estorno) | ADR no repositorio Billing | Quando o Billing for implementado |
 | MongoDB Atlas e fila com claim atomico | ADR no repositorio Execucao | Quando a Execucao for implementada |
 | RabbitMQ no AKS, usuario de banco dedicado por servico | ADRs nos repositorios Infra e Banco | Quando a infraestrutura for descrita em Terraform |
-| C4 nivel 3 (componentes do OS Service com a saga) | `docs/c4-nivel3-componente.puml` | Quando a Saga existir no codigo |
+| C4 nivel 3 (componentes do OS Service com a saga) | `docs/c4-nivel3-componente.puml` | Atualizado com a saga na F3b |

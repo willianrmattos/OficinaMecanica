@@ -481,6 +481,84 @@ namespace OficinaMecanica.Infrastructure.Migrations
                     b.ToTable("Veiculos", (string)null);
                 });
 
+            modelBuilder.Entity("OficinaMecanica.Infrastructure.Saga.OrdemDeServicoSagaState", b =>
+                {
+                    b.Property<Guid>("CorrelationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("AtualizadaEm")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("CancelamentoPorStaff")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<DateTimeOffset>("CriadaEm")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<string>("CurrentState")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("nvarchar(64)");
+
+                    b.Property<string>("MotivoCancelamento")
+                        .HasMaxLength(400)
+                        .HasColumnType("nvarchar(400)");
+
+                    b.Property<string>("Numero")
+                        .IsRequired()
+                        .HasMaxLength(30)
+                        .HasColumnType("nvarchar(30)");
+
+                    b.Property<Guid?>("OrcamentoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("PagamentoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("PrazoAprovacaoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid?>("PrazoPagamentoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.HasKey("CorrelationId");
+
+                    b.HasIndex("CurrentState");
+
+                    b.ToTable("OrdemDeServicoSagas", (string)null);
+                });
+
+            modelBuilder.Entity("OficinaMecanica.Infrastructure.Saga.SagaPrazo", b =>
+                {
+                    b.Property<Guid>("PrazoId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<Guid>("CorrelationId")
+                        .HasColumnType("uniqueidentifier");
+
+                    b.Property<DateTimeOffset>("ExpiraEm")
+                        .HasColumnType("datetimeoffset");
+
+                    b.Property<bool>("Processado")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bit")
+                        .HasDefaultValue(false);
+
+                    b.Property<string>("Tipo")
+                        .IsRequired()
+                        .HasMaxLength(20)
+                        .HasColumnType("nvarchar(20)");
+
+                    b.HasKey("PrazoId");
+
+                    b.HasIndex("Processado", "ExpiraEm")
+                        .HasDatabaseName("IX_SagaPrazos_Processado_ExpiraEm");
+
+                    b.ToTable("SagaPrazos", (string)null);
+                });
+
             modelBuilder.Entity("MassTransit.EntityFrameworkCoreIntegration.OutboxMessage", b =>
                 {
                     b.HasOne("MassTransit.EntityFrameworkCoreIntegration.OutboxState", null)

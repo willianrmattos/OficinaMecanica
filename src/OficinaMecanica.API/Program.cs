@@ -5,6 +5,7 @@ using OficinaMecanica.API.Health;
 using OficinaMecanica.Infrastructure;
 using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.Infrastructure.Messaging;
+using OficinaMecanica.Infrastructure.Saga;
 using OficinaMecanica.API.Middleware;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
@@ -50,7 +51,7 @@ builder.Host.UseSerilog();
 // Services
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
-builder.Services.AddMensageria(builder.Configuration);
+builder.Services.AddMensageriaComSaga(builder.Configuration);
 
 if (!string.IsNullOrWhiteSpace(otelEndpoint))
 {

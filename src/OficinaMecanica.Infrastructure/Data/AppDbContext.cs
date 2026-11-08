@@ -1,6 +1,7 @@
 using OficinaMecanica.Domain.Common;
 using OficinaMecanica.Domain.Entities;
 using OficinaMecanica.Domain.Interfaces;
+using OficinaMecanica.Infrastructure.Saga;
 using MassTransit;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
@@ -23,6 +24,7 @@ public class AppDbContext : DbContext, IUnitOfWork
     public DbSet<ItemServico> ItensServico => Set<ItemServico>();
     public DbSet<ItemPeca> ItensPeca => Set<ItemPeca>();
     public DbSet<HistoricoStatus> HistoricoStatus => Set<HistoricoStatus>();
+    public DbSet<SagaPrazo> SagaPrazos => Set<SagaPrazo>();
 
     public AppDbContext(DbContextOptions<AppDbContext> options, IMediator mediator) : base(options)
     {
@@ -38,6 +40,9 @@ public class AppDbContext : DbContext, IUnitOfWork
         modelBuilder.AddInboxStateEntity();
         modelBuilder.AddOutboxMessageEntity();
         modelBuilder.AddOutboxStateEntity();
+
+        // A tabela de estado da saga (OrdemDeServicoSagas) no mesmo banco: o repositorio de saga do MassTransit usa este DbContext.
+        new OrdemDeServicoSagaStateMap().Configure(modelBuilder);
 
         base.OnModelCreating(modelBuilder);
     }

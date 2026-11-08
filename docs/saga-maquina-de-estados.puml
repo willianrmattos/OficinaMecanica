@@ -8,36 +8,39 @@ skinparam state {
 [*] --> AguardandoDiagnostico : OrdemDeServicoAberta\n/ Send SolicitarDiagnostico\n(OS Recebida)
 
 AguardandoDiagnostico --> EmDiagnostico : DiagnosticoIniciado\n(OS EmDiagnostico)
+AguardandoDiagnostico --> GerandoOrcamento : DiagnosticoConcluido (chegou antes do DiagnosticoIniciado)\n/ adianta o inicio (OS EmDiagnostico) + Send GerarOrcamento
+AguardandoDiagnostico --> Cancelada : Fault<SolicitarDiagnostico>\n(OS Cancelada)
 EmDiagnostico --> GerandoOrcamento : DiagnosticoConcluido\n/ Send GerarOrcamento
 
 GerandoOrcamento --> AguardandoAprovacao : OrcamentoGerado\n(OS AguardandoAprovacao + PrazoId)
-GerandoOrcamento --> Cancelada : OrcamentoNaoGerado | Fault\n(OS Cancelada)
+GerandoOrcamento --> Cancelada : OrcamentoNaoGerado | Fault<GerarOrcamento>\n(OS Cancelada)
 
 AguardandoAprovacao --> AguardandoPagamento : ClienteAprovouOrcamento\n/ reserva estoque + cria PrazoId do pagamento\n+ Send SolicitarPagamento\n(OS AguardandoPagamento)
-AguardandoAprovacao --> Cancelada : estoque insuficiente\n/ Send CancelarOrcamento
+AguardandoAprovacao --> Cancelada : ClienteAprovouOrcamento [estoque insuficiente]\n/ Send CancelarOrcamento
 AguardandoAprovacao --> OrcamentoRecusado : ClienteRecusouOrcamento | PrazoExpirado\n/ Send CancelarOrcamento\n(OS OrcamentoRecusado)
 
 AguardandoPagamento --> AguardandoPagamento : PagamentoSolicitado\n/ grava PagamentoId e link (o PrazoId do pagamento ja nasceu ao enviar SolicitarPagamento)
 AguardandoPagamento --> EmExecucao : PagamentoAprovado\n/ Send IniciarExecucao\n(OS EmExecucao)
 AguardandoPagamento --> CancelandoPagamento : PrazoExpirado\n/ Send CancelarPagamento
-AguardandoPagamento --> Cancelada : PagamentoNaoSolicitado\n/ libera estoque + Send CancelarOrcamento
+AguardandoPagamento --> Cancelada : PagamentoNaoSolicitado | Fault<SolicitarPagamento>\n/ libera estoque + Send CancelarOrcamento
 
-CancelandoPagamento --> Cancelada : PagamentoCancelado | PagamentoNaoSolicitado\n/ libera estoque\n(OS Cancelada)
+CancelandoPagamento --> Cancelada : PagamentoCancelado | PagamentoNaoSolicitado | Fault<SolicitarPagamento>\n/ libera estoque\n(OS Cancelada)
 CancelandoPagamento --> EmExecucao : PagamentoAprovado [cancelou por prazo]\n/ Send IniciarExecucao\n(pagamento tardio: segue como pago)
 CancelandoPagamento --> Estornando : PagamentoAprovado [cancelou por CancelamentoSolicitado]\n/ Send EstornarPagamento\n(producao ja cancelada: devolve o dinheiro)
 
 EmExecucao --> Concluida : ExecucaoFinalizada\n(OS Finalizada)
-EmExecucao --> Estornando : ExecucaoInviavel\n/ Send EstornarPagamento
+EmExecucao --> Estornando : ExecucaoInviavel | Fault<IniciarExecucao>\n/ Send EstornarPagamento
 
 Estornando --> Cancelada : PagamentoEstornado\n/ libera estoque\n(OS Cancelada)
-Estornando --> EstornoPendenteManual : EstornoFalhou\n(alerta; nao vira Cancelada)
+Estornando --> EstornoPendenteManual : EstornoFalhou | Fault<EstornarPagamento>\n(alerta; nao vira Cancelada)
 EstornoPendenteManual --> Cancelada : PagamentoEstornado\n(staff refaz o estorno na API do Billing)\n/ libera estoque
 
 AguardandoDiagnostico --> Cancelada : CancelamentoSolicitado\n/ Send CancelarProducao
 EmDiagnostico --> Cancelada : CancelamentoSolicitado\n/ Send CancelarProducao
 GerandoOrcamento --> Cancelada : CancelamentoSolicitado\n/ Send CancelarProducao + CancelarOrcamento
 AguardandoAprovacao --> Cancelada : CancelamentoSolicitado\n/ Send CancelarProducao + CancelarOrcamento
-AguardandoPagamento --> CancelandoPagamento : CancelamentoSolicitado\n/ Send CancelarPagamento + CancelarProducao
+AguardandoPagamento --> CancelandoPagamento : CancelamentoSolicitado\n/ marca CancelamentoPorStaff + Send CancelarPagamento + CancelarProducao
+CancelandoPagamento --> CancelandoPagamento : CancelamentoSolicitado (depois do prazo)\n/ marca CancelamentoPorStaff + Send CancelarProducao
 
 Concluida --> [*]
 Cancelada --> [*]
@@ -51,8 +54,20 @@ end note
 
 note left of AguardandoDiagnostico
   Evento que nao tem transicao no estado atual (duplicado, fora de ordem
-  ou tardio) e ignorado: DuringAny(Ignore) + OnMissingInstance(Discard).
-  Nunca vai para a fila de erro nem muda estado.
+  ou tardio) e ignorado: DuringAny(Ignore). Nunca vai para a fila de erro
+  nem muda estado. Evento que chega ANTES de a saga existir usa
+  OnMissingInstance(Fault) + retry do endpoint (Discard perderia o evento).
+  PagamentoEstornado/EstornoFalhou fora de Estornando (estorno automatico,
+  reconciliador ou staff do Billing) tambem sao ignorados.
+end note
+
+note right of Cancelada
+  Fault<CancelarPagamento | CancelarOrcamento | CancelarProducao>:
+  so log de erro, sem reenvio nem transicao: a saga permanece onde
+  esta e o comando espera na fila _error do destino pelo redrive
+  manual (retry do destino + redrive; ADR 0008). Todo Fault deixa
+  log de erro estruturado antes da compensacao.
+  A producao so e cancelada no cancelamento do staff.
 end note
 
 note bottom of CancelandoPagamento

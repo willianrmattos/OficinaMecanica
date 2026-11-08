@@ -37,7 +37,7 @@ public class SaudeDoBrokerTests
         var usuario = "oficina";
         var senha = Guid.NewGuid().ToString("N");
         await using var rabbit = new RabbitMqBuilder(ImagensDeInfra.RabbitMq)
-            .WithName($"os-f3a-rabbit-saude-{Guid.NewGuid().ToString("N")[..8]}")
+            .WithName($"os-f3b-rabbit-saude-{Guid.NewGuid().ToString("N")[..8]}")
             .WithUsername(usuario)
             .WithPassword(senha)
             .Build();

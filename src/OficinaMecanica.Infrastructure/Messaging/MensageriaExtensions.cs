@@ -96,7 +96,7 @@ public static class MensageriaExtensions
 
     // O binder lanca para texto que nao e nome de valor do enum; a mensagem dele e em ingles e nao diz que a causa e
     // a secao Mensageria.
-    private static OpcoesDaMensageria LerOpcoes(IConfiguration configuration)
+    internal static OpcoesDaMensageria LerOpcoes(IConfiguration configuration)
     {
         try
         {
