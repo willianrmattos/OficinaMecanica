@@ -87,6 +87,13 @@ for api in "OS:$E2E_PORTA_OS" "Billing:$E2E_PORTA_BILLING" "Execucao:$E2E_PORTA_
   echo "  $nome pronto em $(( $(date +%s) - inicio )) s"
 done
 
+# O adapter do prometheus-net so passa a observar os Meters do servico (ex.: OficinaMecanica.Saga) a partir da PRIMEIRA leitura
+# do /metrics: incrementos anteriores a ela nao aparecem. Leio uma vez agora, antes de qualquer fluxo, para os contadores da
+# saga contarem desde a primeira OS (um Prometheus real raspa o endpoint continuamente e nao tem esse buraco).
+for porta in "$E2E_PORTA_OS" "$E2E_PORTA_BILLING" "$E2E_PORTA_EXECUCAO"; do
+  curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$porta/metrics" || true
+done
+
 compose ps
 cat <<EOF
 

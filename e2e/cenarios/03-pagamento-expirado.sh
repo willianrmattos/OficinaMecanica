@@ -17,6 +17,11 @@ cenario() {
   link="$(os_link_pagamento "$os")"; pref="${link##*/}"
   afirmar_igual "estoque reservado" "8" "$(peca_estoque "$C_PECA_ID")"
 
+  # Base lida antes e incremento conferido logo depois: as series do Meter da saga somem do /metrics 5 min depois da ultima atualizacao.
+  local cancel0 prazo0
+  cancel0="$(os_metrica saga_cancelada estado_origem=CancelandoPagamento)"
+  prazo0="$(os_metrica saga_prazo_expirado tipo=Pagamento)"
+
   passo "forca o vencimento do prazo de pagamento (Pagamentos.ExpiraEm e SagaPrazos.ExpiraEm no passado)"
   # Optei por recuar o Billing ANTES do OS: o sweeper do OS (a cada 5 s) dispara assim que enxerga a linha vencida, e se o
   # CancelarPagamento chegasse ao Billing antes de Pagamentos.ExpiraEm passar, o pagamento seria registrado como Cancelado
@@ -32,6 +37,8 @@ cenario() {
   esperar_valor "estado da saga (final)" 90 Cancelada saga_estado "$os" || return 1
   info "do vencimento forcado ate a saga Cancelada: $(( $(date +%s) - t0 )) s"
   esperar_valor "status da OS" 30 Cancelada os_status "$os" || return 1
+  afirmar_numero "metrica saga_prazo_expirado{tipo=Pagamento} subiu >= 1 (so o prazo vigente conta)" ge "$((prazo0 + 1))" "$(os_metrica saga_prazo_expirado tipo=Pagamento)"
+  afirmar_numero "metrica saga_cancelada{estado_origem=CancelandoPagamento} subiu >= 1" ge "$((cancel0 + 1))" "$(os_metrica saga_cancelada estado_origem=CancelandoPagamento)"
 
   passo "efeitos: pagamento Expirado, orcamento cancelado, estoque devolvido, prazo marcado, e-mail"
   afirmar_igual "pagamento no Billing" "Expirado" "$(billing_pagamento_status "$os")"

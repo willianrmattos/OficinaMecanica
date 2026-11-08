@@ -95,7 +95,7 @@ cenario() {
   esperar_valor "estoque da peca A reservado" 30 8 peca_estoque "$A_PECA_ID" || return 1
   esperar_valor "estoque da peca B reservado" 30 8 peca_estoque "$B_PECA_ID" || return 1
   esperar_valor "SolicitarPagamento x2 esperando na billing-comandos" 30 2 fila_total billing-comandos || return 1
-  manter_valor "link de pagamento da OS A ausente" 5 "" os_link_pagamento "$A_OS_ID"
+  manter_valor "link de pagamento da OS A (consulta 200 e sem link)" 5 ausente os_link_estado "$A_OS_ID"
 
   passo "Billing volta (processo que tinha morrido): cada OS ganha UM pagamento e um link"
   billing_subir || return 1
@@ -108,7 +108,19 @@ cenario() {
   afirmar_igual "estoque da peca B (uma unica baixa)" "8" "$(peca_estoque "$B_PECA_ID")"
 
   passo "fluxo retomado: pagamento e reparo das duas OS ate Finalizada"
+  # O Billing acabou de reiniciar duas vezes (stop e kill). O gateway Fake nasce de novo, mas o BillingDb guarda os ids das
+  # execucoes anteriores sob indice unico: a primeira aprovacao depois do restart tem que responder 200 (sem repeticao) e
+  # com um id MAIOR que todos os ja gravados.
+  local ids_antes max_antes
+  ids_antes="$(sql_billing "SELECT COUNT(*) FROM TentativasPagamento")"
+  max_antes="$(sql_billing "SELECT ISNULL(MAX(CAST(GatewayPaymentId AS bigint)), 0) FROM TentativasPagamento")"
+  info "ids de gateway ja gravados no BillingDb antes da 1a aprovacao pos-restart: $ids_antes (maior: $max_antes)"
+  [ "$ids_antes" -gt 0 ] || info "[INFO]  BillingDb sem pagamentos anteriores: a prova de colisao fica completa so na execucao com os cenarios 01 a 04 antes"
   pagar_pelo_gateway_fake "$A_OS_ID"
+  afirmar_numero "id do gateway apos o restart do Billing e maior que todos os ja gravados" gt "$max_antes" "$PAG_GATEWAY_ID"
+  afirmar_numero "id do gateway Fake com 16 ou mais digitos (derivado do relogio, como o do Mercado Pago)" ge 16 "${#PAG_GATEWAY_ID}"
+  afirmar_numero "exatamente uma tentativa nova gravada no BillingDb (nenhuma colisao, nenhuma repeticao)" eq "$((ids_antes + 1))" \
+    "$(sql_billing "SELECT COUNT(*) FROM TentativasPagamento")"
   esperar_valor "ordem A liberada para reparo" 60 AguardandoExecucao exec_status "$A_OS_ID" || return 1
   pagar_pelo_gateway_fake "$B_OS_ID"
   esperar_valor "ordem B liberada para reparo" 60 AguardandoExecucao exec_status "$B_OS_ID" || return 1

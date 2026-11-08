@@ -13,18 +13,35 @@ AQUI="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$AQUI/lib-ambiente.sh"
 carregar_env
 
+uso() {
+  echo "uso: bash e2e/executar-cenarios.sh [--so NN[,NN...]] [--sem-finais]" >&2
+  echo "  --so 01,03     roda so os cenarios de prefixo 01 e 03 (99 = verificacoes finais)" >&2
+  echo "  --sem-finais   nao roda as verificacoes finais" >&2
+}
+
 SO=""
 FINAIS=1
 while [ $# -gt 0 ]; do
   case "$1" in
-    --so) SO=",$2,"; shift ;;
+    --so)
+      # Sem argumento (ou seguido de outra opcao) nao ha lista para filtrar: aviso e saio em vez de abortar com variavel nao definida.
+      if [ $# -lt 2 ] || [[ "$2" == --* ]] || ! [[ "$2" =~ ^[0-9]{2}(,[0-9]{2})*$ ]]; then
+        echo "--so exige uma lista de prefixos numericos de dois digitos (ex.: --so 01,03)" >&2; uso; exit 2
+      fi
+      SO=",$2,"; shift ;;
     --sem-finais) FINAIS=0 ;;
-    *) echo "argumento desconhecido: $1" >&2; exit 2 ;;
+    -h|--help) uso; exit 0 ;;
+    *) echo "argumento desconhecido: $1" >&2; uso; exit 2 ;;
   esac
   shift
 done
 
 mkdir -p "$GERADO/logs"
+# Mesma razao do subir.sh: a primeira leitura do /metrics e que liga a observacao dos Meters no prometheus-net; refaco aqui
+# (e idempotente) para quem subiu o ambiente de outra forma. Os contadores da saga que o 99 confere partem dela.
+for porta in "$E2E_PORTA_OS" "$E2E_PORTA_BILLING" "$E2E_PORTA_EXECUCAO"; do
+  curl -s -o /dev/null --max-time 5 "http://127.0.0.1:$porta/metrics" || true
+done
 LOG="$GERADO/logs/execucao-$(date +%Y%m%d-%H%M%S).log"
 # Cada execucao parte de um ledger de estoque novo (o ledger so vale para as pecas criadas nesta execucao).
 [ -z "$SO" ] && rm -f "$GERADO/ledger-estoque.tsv"

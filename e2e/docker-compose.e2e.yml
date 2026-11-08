@@ -19,7 +19,9 @@ x-saude-dotnet: &saude-dotnet
 
 services:
   sqlserver:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    # Fixado por digest, o mesmo dos testes de infraestrutura do OS (16.0.4260.1): o tag 2022-latest e movel e nenhum tag de
+    # patch (2022-CU22 a CU27) tem esse digest.
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:d38c2a64812d775f844088e4e44ab33846eefc61157431bf9c8a3943a534c22e
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "${E2E_SA_PASSWORD:-}"
@@ -42,7 +44,7 @@ services:
   # banco), o mesmo desenho do OficinaMecanica.Banco/sql/criar-usuarios.sql. As tabelas nascem das migrations de cada
   # servico (aplicadas por ele mesmo na partida em Development, ver README).
   sql-init:
-    image: mcr.microsoft.com/mssql/server:2022-latest
+    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:d38c2a64812d775f844088e4e44ab33846eefc61157431bf9c8a3943a534c22e
     depends_on:
       sqlserver:
         condition: service_healthy
@@ -98,7 +100,7 @@ services:
       RABBITMQ_DEFAULT_PASS: "${E2E_RABBIT_PASSWORD:-}"
     ports:
       - "127.0.0.1:${E2E_PORTA_AMQP:-56720}:5672"
-      - "127.0.0.1:${E2E_PORTA_RABBIT_UI:-15673}:15672"
+      - "127.0.0.1:${E2E_PORTA_RABBIT_UI:-15683}:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
     healthcheck:
@@ -119,7 +121,7 @@ services:
   # Substituto do OficinaMecanica.Seguranca: serve so o JWKS com a chave PUBLICA do par de DEV gerado em .gerado/.
   # A emissao do token fica por conta de emitir-token.sh (ver a limitacao no README).
   jwks:
-    image: python:3.12-alpine
+    image: python:3.12.16-alpine
     command: ["python", "-m", "http.server", "80", "--directory", "/srv"]
     volumes:
       - ./.gerado/jwks:/srv/.well-known:ro
@@ -134,7 +136,7 @@ services:
 
   billing:
     build:
-      context: ${E2E_CONTEXTO_BILLING:-../../../OficinaMecanica.Billing}
+      context: ${E2E_CONTEXTO_BILLING:-../../OficinaMecanica.Billing}
       dockerfile: Dockerfile
     image: oficina-e2e/billing:local
     depends_on:
@@ -170,7 +172,7 @@ services:
 
   execucao:
     build:
-      context: ${E2E_CONTEXTO_EXECUCAO:-../../../OficinaMecanica.Execucao}
+      context: ${E2E_CONTEXTO_EXECUCAO:-../../OficinaMecanica.Execucao}
       dockerfile: Dockerfile
     image: oficina-e2e/execucao:local
     depends_on:
@@ -205,7 +207,8 @@ services:
 
   os:
     build:
-      # O OS Service e o proprio worktree (este compose fica em e2e/, um nivel abaixo da raiz).
+      # O OS Service e o proprio checkout (este compose fica em e2e/, um nivel abaixo da raiz). Os padroes dos irmaos
+      # (../../OficinaMecanica.*) sao os do checkout principal; os scripts exportam E2E_CONTEXTO_* ja resolvidos e passam por cima.
       context: ${E2E_CONTEXTO_OS:-..}
       dockerfile: Dockerfile
     image: oficina-e2e/os:local
@@ -248,7 +251,8 @@ services:
       Saga__SweeperIntervaloSegundos: "5"
       Saga__SweeperLote: "50"
       Saga__SweeperHabilitado: "true"
-      # Ainda sem leitor neste commit (a consulta sincrona a Execucao e da F3c); deixo igual ao manifest do AKS.
+      # Consulta sincrona do OS a Execucao (GET /api/ordens-de-servico/{id}/execucao) pela rede do compose; no AKS o valor e o
+      # Service da Execucao.
       Execucao__BaseUrl: "http://execucao:8080"
       Otel__Endpoint: ""
     ports:

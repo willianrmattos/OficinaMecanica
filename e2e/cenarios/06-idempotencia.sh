@@ -5,6 +5,9 @@
 set -uo pipefail
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
+# Avisos da saga para decisoes de aprovacao que ja nao tinham efeito, no log do OS, para uma OS.
+contar_decisoes_ignoradas() { docker_logs os | grep -c "Decisão ClienteAprovouOrcamento da ordem de serviço $1 ignorada" || true; }
+
 cenario() {
   titulo "Cenario 06 - idempotencia"
   pre_condicoes
@@ -14,9 +17,13 @@ cenario() {
   levar_ate_aguardando_aprovacao F || return 1
   local os="$F_OS_ID"
 
+  # Base lida antes e incremento conferido logo depois: as series do Meter da saga somem do /metrics 5 min depois da ultima atualizacao.
+  local ignoradas0
+  ignoradas0="$(os_metrica saga_decisao_ignorada)"
+
   passo "decisao duplicada: duas aprovacoes disparadas ao mesmo tempo (rota anonima)"
-  curl -s -o /dev/null -w '%{http_code}' -X POST "$OS_URL/api/ordens-de-servico/$os/aprovar" > "$TMPD/aprov1" &
-  curl -s -o /dev/null -w '%{http_code}' -X POST "$OS_URL/api/ordens-de-servico/$os/aprovar" > "$TMPD/aprov2" &
+  curl -s --max-time 30 -o /dev/null -w '%{http_code}' -X POST "$OS_URL/api/ordens-de-servico/$os/aprovar" > "$TMPD/aprov1" &
+  curl -s --max-time 30 -o /dev/null -w '%{http_code}' -X POST "$OS_URL/api/ordens-de-servico/$os/aprovar" > "$TMPD/aprov2" &
   wait
   local c1 c2 aceitas=0
   c1="$(cat "$TMPD/aprov1")"; c2="$(cat "$TMPD/aprov2")"
@@ -35,7 +42,10 @@ cenario() {
   esperar_preenchido "link de pagamento" 60 os_link_pagamento "$os" || return 1
   afirmar_igual "pagamentos criados no Billing" "1" "$(billing_contar Pagamentos "$os")"
   afirmar_igual "orcamentos no Billing" "1" "$(billing_contar Orcamentos "$os")"
-  info "[INFO]  avisos 'Decisao ... ignorada' da saga no log do OS para esta OS: $(docker_logs os | grep -c "Decisão ClienteAprovouOrcamento da ordem de serviço $os ignorada" || true) (so existem se a 2a aprovacao chegou depois de a saga avancar)"
+  # Cada aprovacao aceita (202) alem da primeira chega a saga ja em AguardandoPagamento e so pode ser ignorada: com duas
+  # aceitas tem que haver exatamente um aviso; com uma so (a outra deu 409), nenhum. Sem essa igualdade o assert passaria com 0 avisos.
+  esperar_valor "avisos 'Decisao ... ignorada' da saga no log do OS para esta OS (aprovacoes aceitas - 1)" 30 "$((aceitas - 1))" contar_decisoes_ignoradas "$os"
+  afirmar_numero "metrica saga_decisao_ignorada subiu pelo menos o numero de decisoes ignoradas desta OS" ge "$((ignoradas0 + aceitas - 1))" "$(os_metrica saga_decisao_ignorada)"
 
   passo "reenvio da mesma decisao depois de a saga avancar: 409 e nada muda"
   aprovar_orcamento "$os"

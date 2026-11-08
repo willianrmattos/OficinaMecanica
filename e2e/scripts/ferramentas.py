@@ -10,7 +10,11 @@ Subcomandos:
   jget <caminho>                          le JSON do stdin e imprime o valor no caminho (a.b[0].c)
   jlen <caminho>                          tamanho de uma lista (ou de um objeto) no caminho
   jfind <caminho-da-lista> <chave> <valor> [<saida>]   primeiro item da lista com chave == valor
-  jhistorico                              status do historicoStatus da OS em ordem cronologica, separados por ","
+  portas-compose <docker-compose.yml>...  portas de host publicadas por cada compose, uma "porta pasta" por linha
+  listar-filas <fila-obrigatoria>...      filas da API de management (stdin) como nome|mensagens|consumidores; exit 1 se incompleta
+  prom-soma <metrica> [rotulo=valor ...]  soma das amostras de uma metrica no texto Prometheus lido do stdin (0 se nao existir)
+  jhistorico                              status do historicoStatus da OS, na ordem em que a API os devolveu, separados por ","
+  jhistorico-cronologico                  "sim" se as datas do historicoStatus estao em ordem nao decrescente, senao "nao"
 """
 import base64
 import hashlib
@@ -205,10 +209,71 @@ def main(argv: list[str]) -> None:
         lista = _caminho(_ler_json(), args[0]) or []
         achado = next((i for i in lista if isinstance(i, dict) and _formatar(i.get(args[1])) == args[2]), None)
         print(_formatar(_caminho(achado, args[3]) if len(args) > 3 else achado))
+    elif comando == "portas-compose":
+        # Portas de HOST publicadas por um docker-compose (itens de "ports:" no formato [ip:]porta|${VAR:-porta}:alvo).
+        # Imprime "porta arquivo" por linha; o padrao do ${VAR:-porta} conta porque e a porta que sobe sem .env.
+        for arquivo in args:
+            em_ports, nivel = False, 0
+            for linha in open(arquivo, encoding="utf-8"):
+                achou = re.match(r"^(\s*)ports:\s*$", linha)
+                if achou:
+                    em_ports, nivel = True, len(achou.group(1))
+                    continue
+                if not em_ports:
+                    continue
+                item = re.match(r"^\s*-\s*(.+?)\s*$", linha)
+                if item and len(linha) - len(linha.lstrip()) >= nivel:
+                    alvo = item.group(1).strip("\"'")
+                    porta = re.match(r"^(?:\d+\.\d+\.\d+\.\d+:)?(?:\$\{[A-Z_0-9]+:-(\d+)\}|(\d+))(?:-\d+)?:\d+", alvo)
+                    if porta:
+                        print(porta.group(1) or porta.group(2), os.path.basename(os.path.dirname(os.path.abspath(arquivo))))
+                elif linha.strip() and not linha.strip().startswith("#"):
+                    em_ports = False
+    elif comando == "listar-filas":
+        # Lista as filas da API de management (JSON no stdin) como nome|mensagens|consumidores. Recuso, com exit 1 e a causa no
+        # stderr, tudo que nao seja uma listagem completa: corpo vazio, JSON de erro, lista que nao e de filas, menos filas do
+        # que as obrigatorias ou alguma obrigatoria ausente. Sem isso, uma API fora do ar viraria "0 mensagens" e o assert
+        # de fila vazia passaria sem ter olhado fila nenhuma.
+        obrigatorias = args
+        bruto = sys.stdin.buffer.read().decode("utf-8", "replace").strip()
+        try:
+            filas = json.loads(bruto)
+        except json.JSONDecodeError:
+            sys.exit(f"API de management sem JSON valido (corpo: {bruto[:120]!r})")
+        if not isinstance(filas, list) or not all(isinstance(q, dict) and "name" in q and "messages" in q for q in filas):
+            sys.exit(f"API de management nao devolveu uma lista de filas ({bruto[:120]!r})")
+        nomes = {q["name"] for q in filas}
+        faltando = [n for n in obrigatorias if n not in nomes]
+        if len(filas) < len(obrigatorias) or faltando:
+            sys.exit(f"listagem incompleta: {len(filas)} fila(s), faltando {', '.join(faltando) or '-'}")
+        for q in sorted(filas, key=lambda q: q["name"]):
+            print(f"{q['name']}|{q['messages']}|{q.get('consumers', 0)}")
+    elif comando == "prom-soma":
+        # Soma os valores das amostras do texto Prometheus (stdin) cujo nome e exatamente args[0] e que tem todos os rotulos
+        # pedidos (rotulo=valor). Sem amostra nenhuma imprime 0: contador nunca incrementado nem aparece no /metrics.
+        nome, filtros = args[0], [f.split("=", 1) for f in args[1:]]
+        total = 0.0
+        for linha in sys.stdin.buffer.read().decode("utf-8", "replace").splitlines():
+            if linha.startswith("#") or not linha.startswith(nome):
+                continue
+            m = re.fullmatch(r"(?P<n>[A-Za-z0-9_:]+)(?:\{(?P<r>.*)\})?\s+(?P<v>\S+)(?:\s+\S+)?", linha.strip())
+            if not m or m.group("n") != nome:
+                continue
+            rotulos = dict(re.findall(r'([A-Za-z0-9_]+)="((?:[^"\\]|\\.)*)"', m.group("r") or ""))
+            if all(rotulos.get(k) == v for k, v in filtros):
+                total += float(m.group("v"))
+        print(int(total) if total == int(total) else total)
     elif comando == "jhistorico":
         itens = _caminho(_ler_json(), "historicoStatus") or []
-        # A API devolve o historico sem ordenar por data; ordeno aqui para comparar a sequencia real das transicoes.
-        print(",".join(i["status"] for i in sorted(itens, key=lambda i: i["dataAlteracao"])))
+        # Imprimo na ordem em que a API devolveu, sem reordenar: e a propria ordem da API que os cenarios conferem.
+        print(",".join(i["status"] for i in itens))
+    elif comando == "jhistorico-cronologico":
+        itens = _caminho(_ler_json(), "historicoStatus") or []
+        datas = [i["dataAlteracao"] for i in itens]
+        # As datas vem sem offset e no mesmo formato ISO; comparo como datetime para nao depender das casas decimais.
+        from datetime import datetime
+        lidas = [datetime.fromisoformat(d) for d in datas]
+        print("sim" if lidas == sorted(lidas) else "nao")
     else:
         sys.exit(__doc__)
 

@@ -14,12 +14,17 @@ cenario() {
   local os="$B_OS_ID"
   afirmar_igual "estoque antes da decisao" "10" "$(peca_estoque "$B_PECA_ID")"
 
+  # Base lida antes e incremento conferido logo depois: as series do Meter da saga somem do /metrics 5 min depois da ultima atualizacao.
+  local recusados0
+  recusados0="$(os_metrica saga_orcamento_recusado causa=ClienteRecusouOrcamento)"
+
   passo "cliente recusa o orcamento (rota anonima, 202)"
   recusar_orcamento "$os" "Valor acima do esperado"
   esperar_http "recusa do orcamento" 202
   afirmar_igual "corpo do 202: status ainda AguardandoAprovacao" "AguardandoAprovacao" "$(J status)"
   esperar_valor "status da OS (saga aplicou a recusa)" 60 OrcamentoRecusado os_status "$os" || return 1
   esperar_valor "estado da saga (final)" 30 OrcamentoRecusado saga_estado "$os" || return 1
+  afirmar_numero "metrica saga_orcamento_recusado{causa=ClienteRecusouOrcamento} subiu >= 1" ge "$((recusados0 + 1))" "$(os_metrica saga_orcamento_recusado causa=ClienteRecusouOrcamento)"
 
   passo "efeitos da recusa: orcamento cancelado, sem pagamento, estoque intacto, e-mail"
   esperar_valor "orcamento no Billing (CancelarOrcamento)" 60 Cancelado billing_orcamento_status "$os" || return 1

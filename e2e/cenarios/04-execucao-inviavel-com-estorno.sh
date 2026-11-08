@@ -26,6 +26,10 @@ cenario() {
   reivindicar_reparo "$os"
   afirmar_igual "estoque reservado durante a execucao" "8" "$(peca_estoque "$D_PECA_ID")"
 
+  # Base lida antes e incremento conferido logo depois: as series do Meter da saga somem do /metrics 5 min depois da ultima atualizacao.
+  local cancel0
+  cancel0="$(os_metrica saga_cancelada estado_origem=Estornando)"
+
   passo "congela o Billing (docker pause) e o mecanico declara a execucao inviavel"
   docker pause "$(cid_de billing)" >/dev/null && BILLING_PAUSADO=1
   http POST "$EXECUCAO_URL/api/ordens-de-producao/$os/reparo/inviabilizar" "$TOKEN_MEC1" \
@@ -38,7 +42,7 @@ cenario() {
   manter_valor "estado da saga" 10 Estornando saga_estado "$os"
   manter_valor "status da OS" 1 EmExecucao os_status "$os"
   afirmar_igual "estoque ainda reservado (so volta depois do PagamentoEstornado)" "8" "$(peca_estoque "$D_PECA_ID")"
-  afirmar_numero "EstornarPagamento esperando o Billing na fila billing-comandos" ge 1 "$(fila_total billing-comandos)"
+  afirmar_numero "EstornarPagamento (unica mensagem) esperando o Billing na fila billing-comandos" eq 1 "$(fila_total billing-comandos)"
   info "billing-comandos: total=$(fila_total billing-comandos) prontas=$(fila_prontas billing-comandos)"
 
   passo "descongela o Billing: estorno no gateway Fake -> PagamentoEstornado -> estoque liberado -> OS Cancelada"
@@ -46,6 +50,7 @@ cenario() {
   esperar_valor "estado da saga (final)" 90 Cancelada saga_estado "$os" || return 1
   esperar_valor "status da OS" 30 Cancelada os_status "$os" || return 1
   esperar_valor "estoque liberado (10)" 30 10 peca_estoque "$D_PECA_ID" || return 1
+  afirmar_numero "metrica saga_cancelada{estado_origem=Estornando} subiu >= 1" ge "$((cancel0 + 1))" "$(os_metrica saga_cancelada estado_origem=Estornando)"
   registrar_estoque "$D_PECA_ID" 10 "cenario 04: execucao inviavel, estoque liberado apos o estorno"
 
   passo "efeitos no Billing e nos e-mails"

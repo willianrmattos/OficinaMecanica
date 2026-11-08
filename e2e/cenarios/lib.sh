@@ -8,6 +8,9 @@
 #  - funcoes que preenchem variaveis globais (HTTP_STATUS, HTTP_BODY, <PREFIXO>_*) nao rodam em $(...), que perderia
 #    o estado; as que so devolvem um valor para esperar_valor rodam em subshell de proposito.
 
+# Esta biblioteca preenche variaveis globais (HTTP_HEADERS, PAG_GATEWAY_ID, PAG_REQUEST_ID...) que so os cenarios leem: eles a
+# carregam com source dinamico, que o shellcheck nao segue, e por isso as enxerga como "nao usadas".
+# shellcheck disable=SC2034
 CEN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 # shellcheck source=../lib-ambiente.sh
 source "$CEN_DIR/../lib-ambiente.sh"
@@ -155,6 +158,7 @@ J() { printf '%s' "$HTTP_BODY" | "$PY" "$FERR" jget "$1"; }          # campo do 
 Jlen() { printf '%s' "$HTTP_BODY" | "$PY" "$FERR" jlen "$1"; }
 Jfind() { printf '%s' "$HTTP_BODY" | "$PY" "$FERR" jfind "$@"; }
 Jhistorico() { printf '%s' "$HTTP_BODY" | "$PY" "$FERR" jhistorico; }
+Jhistorico_cronologico() { printf '%s' "$HTTP_BODY" | "$PY" "$FERR" jhistorico-cronologico; }
 jval() { printf '%s' "$1" | "$PY" "$FERR" jget "$2"; }               # campo de um JSON qualquer
 
 esperar_http() { # descricao esperado_status
@@ -194,11 +198,22 @@ rabbit_api() { curl -sS --max-time 10 -u "$E2E_RABBIT_USER:$E2E_RABBIT_PASSWORD"
 fila_total() { rabbit_api "queues/%2F/$1" | "$PY" "$FERR" jget messages; }
 fila_prontas() { rabbit_api "queues/%2F/$1" | "$PY" "$FERR" jget messages_ready; }
 fila_consumidores() { rabbit_api "queues/%2F/$1" | "$PY" "$FERR" jget consumers; }
-listar_filas() { # nome|mensagens|consumidores, uma por linha
-  rabbit_api "queues/%2F" | "$PY" -c "
-import sys, json
-for q in sorted(json.load(sys.stdin), key=lambda q: q['name']):
-    print(f\"{q['name']}|{q['messages']}|{q['consumers']}\")"
+# As filas de trabalho dos tres servicos: a listagem so vale se trouxer todas elas (ver "listar-filas" no ferramentas.py).
+FILAS_DE_TRABALHO="os-saga billing-comandos execucao-comandos"
+listar_filas() { # nome|mensagens|consumidores, uma por linha; exit 1 e causa no stderr se a listagem nao for completa
+  # shellcheck disable=SC2086 # a lista de nomes vira um argumento por fila de proposito
+  rabbit_api "queues/%2F" | "$PY" "$FERR" listar-filas $FILAS_DE_TRABALHO
+}
+# somar_filas <erro|trabalho>: soma das mensagens das filas *_error ou das demais; "INDISPONIVEL: <causa>" se a listagem falhar,
+# para o assert reprovar com a causa em vez de ler "0" de uma API que nao respondeu.
+somar_filas() {
+  local filas
+  if ! filas="$(listar_filas 2>&1)"; then echo "INDISPONIVEL: $(printf '%s' "$filas" | tr '\n' ' ')"; return 0; fi
+  if [ "$1" = erro ]; then
+    printf '%s\n' "$filas" | awk -F'|' '$1 ~ /_error$/ { soma += $2 } END { print soma + 0 }'
+  else
+    printf '%s\n' "$filas" | awk -F'|' '$1 !~ /_error$/ { soma += $2 } END { print soma + 0 }'
+  fi
 }
 
 # Mailpit: resumo do texto de cada e-mail recebido por um destinatario (um por linha, do mais antigo ao mais novo).
@@ -232,7 +247,24 @@ billing_pagamento_status() {
   http GET "$BILLING_URL/api/pagamentos/ordem-de-servico/$1" "$TOKEN_ADMIN"
   if [ "$HTTP_STATUS" = "200" ]; then jval "$HTTP_BODY" status; else echo "$HTTP_STATUS"; fi
 }
+# Rota sincrona do OS que pergunta a Execucao: devolve a origem (execucao | saga) ou o codigo HTTP se nao for 200.
+os_execucao_origem() {
+  http GET "$OS_URL/api/ordens-de-servico/$1/execucao" "$TOKEN_ADMIN"
+  if [ "$HTTP_STATUS" = "200" ]; then jval "$HTTP_BODY" origem; else echo "$HTTP_STATUS"; fi
+}
+# Estado do link de pagamento da OS visto pela API: "ausente", "presente" ou "ERRO_HTTP_<codigo>" se a consulta nao deu 200, para
+# um assert de "ainda sem link" nao passar so porque a consulta falhou.
+os_link_estado() {
+  http GET "$OS_URL/api/ordens-de-servico/$1" "$TOKEN_ADMIN"
+  if [ "$HTTP_STATUS" != "200" ]; then echo "ERRO_HTTP_$HTTP_STATUS"; elif [ -z "$(jval "$HTTP_BODY" linkPagamento)" ]; then echo ausente; else echo presente; fi
+}
 os_link_pagamento() { http GET "$OS_URL/api/ordens-de-servico/$1" "$TOKEN_ADMIN"; jval "$HTTP_BODY" linkPagamento; }
+# os_metrica <nome-do-instrumento> [rotulo=valor ...]: soma da metrica da saga no /metrics do OS (prometheus-net nomeia
+# o instrumento "saga_x" do Meter OficinaMecanica.Saga como oficinamecanica_saga_saga_x).
+os_metrica() {
+  local nome="$1"; shift
+  curl -sS --max-time 10 "$OS_URL/metrics" | "$PY" "$FERR" prom-soma "oficinamecanica_saga_$nome" "$@"
+}
 # Total de linhas de uma tabela do Billing/OS para uma OS (prova "sem duplicar").
 billing_contar() { sql_billing "SELECT COUNT(*) FROM $1 WHERE OrdemDeServicoId = '$2'"; }
 
@@ -317,18 +349,13 @@ recusar_orcamento() { http POST "$OS_URL/api/ordens-de-servico/$1/recusar" - "{\
 # e dispara o webhook, com assinatura valida, pelo mesmo command da rota real. Preenche PAG_PREF, PAG_GATEWAY_ID e
 # PAG_REQUEST_ID.
 pagar_pelo_gateway_fake() {
-  local link tentativa
+  local link
   link="$(os_link_pagamento "$1")"
   PAG_PREF="${link##*/}"
-  # O contador de ids do gateway Fake vive na memoria do Billing e recomeca em 100000000001 a cada restart, enquanto o
-  # BillingDb guarda os ids anteriores sob indice unico: depois de um restart a simulacao colide (409) ate o contador
-  # passar dos ids ja usados. Repito a chamada (cada uma consome um id) em vez de esconder o fato: fica registrado.
-  for tentativa in 1 2 3 4 5 6 7 8 9 10 11 12; do
-    http POST "$BILLING_URL/dev/pagamentos/$PAG_PREF/aprovar" -
-    [ "$HTTP_STATUS" = "409" ] || break
-    info "[INFO]  tentativa $tentativa da simulacao: 409 (id do gateway Fake ja gravado no BillingDb; contador em memoria reiniciado pelo restart do Billing)"
-  done
-  esperar_http "simulacao de aprovacao no gateway Fake" 200
+  # Uma unica tentativa, sem repeticao: o id de pagamento do gateway Fake parte do relogio a cada partida do Billing, entao a
+  # primeira aprovacao tem que responder 200 mesmo com ids de partidas anteriores gravados no BillingDb (indice unico).
+  http POST "$BILLING_URL/dev/pagamentos/$PAG_PREF/aprovar" -
+  esperar_http "simulacao de aprovacao no gateway Fake (primeira tentativa)" 200
   PAG_GATEWAY_ID="$(J gatewayPaymentId)"
   PAG_REQUEST_ID="$(J requestId)"
   afirmar_igual "status do pagamento no gateway" "approved" "$(J status)"
@@ -374,11 +401,9 @@ pre_condicoes() {
 }
 
 # Soma das mensagens paradas nas filas *_error (deve ser 0 depois de qualquer cenario sem falha injetada).
-erros_total() {
-  listar_filas | awk -F'|' '$1 ~ /_error$/ { soma += $2 } END { print soma + 0 }'
-}
+erros_total() { somar_filas erro; }
 verificar_sem_erros() {
-  afirmar_igual "mensagens em filas *_error" "0" "$(erros_total)"
+  afirmar_igual "mensagens em filas *_error (listagem completa da API de management)" "0" "$(erros_total)"
 }
 # Espera o outbox transacional de um dos bancos SQL esvaziar (nada preso esperando entrega ao broker).
 verificar_outbox_vazio() {

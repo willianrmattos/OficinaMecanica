@@ -49,6 +49,15 @@ cenario() {
     sql_os "SELECT COUNT(*) FROM OutboxMessage" || true
   manter_valor "ordem na Execucao (ainda inexistente)" 6 404 exec_status "$os"
   afirmar_igual "status da OS (aceita e gravada)" "Recebida" "$(os_status "$os")"
+  # A OS ainda nao foi enfileirada na Execucao (o OrdemDeServicoAberta esta no outbox): a rota sincrona cai no fallback
+  # "saga" com o que o proprio OS sabe, sem inventar producao.
+  http GET "$OS_URL/api/ordens-de-servico/$os/execucao" "$TOKEN_ADMIN"
+  esperar_http "rota sincrona /execucao com a OS ainda nao enfileirada" 200
+  afirmar_igual "origem da resposta (fallback)" "saga" "$(J origem)"
+  afirmar_igual "motivoDoFallback (Execucao respondeu 404)" "ProducaoNaoEnfileirada" "$(J motivoDoFallback)"
+  afirmar_igual "statusDaOrdem" "Recebida" "$(J statusDaOrdem)"
+  afirmar_vazio "estadoDaSaga (a saga ainda nao existe)" "$(J estadoDaSaga)"
+  afirmar_igual "producao (nada inventado no fallback)" "" "$(J producao)"
 
   passo "RabbitMQ volta: os servicos reconectam e a ordem chega na Execucao"
   rabbit_subir || return 1

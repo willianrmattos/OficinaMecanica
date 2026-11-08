@@ -20,12 +20,16 @@ migrations em producao.
 - Docker Desktop ligado, com `docker compose` v2 (testado com Docker 29 e Compose 5).
 - Git Bash no Windows (ou qualquer bash), com `curl`, `openssl`, `sha256sum` e `timeout`; **Python 3.10+** no PATH
   (so biblioteca padrao). Nao precisa de `jq`, .NET SDK nem `kubectl`.
-- Os tres repositorios lado a lado: `<Pos>/OficinaMecanica` (ou este worktree em `<Pos>/_worktrees/os-e2e`),
-  `<Pos>/OficinaMecanica.Billing` e `<Pos>/OficinaMecanica.Execucao`. Outro caminho: `E2E_CONTEXTO_OS`,
-  `E2E_CONTEXTO_BILLING`, `E2E_CONTEXTO_EXECUCAO`.
+- Os tres repositorios lado a lado, no layout do ecossistema: `E:\FIAP\Pos\OficinaMecanica` (este checkout, onde fica o
+  `e2e/`), `E:\FIAP\Pos\OficinaMecanica.Billing` e `E:\FIAP\Pos\OficinaMecanica.Execucao`. O `lib-ambiente.sh` procura os
+  irmaos ao lado da raiz do OS e, se este `e2e/` estiver num worktree (`<Pos>/_worktrees/<nome>/e2e`), dois niveis acima.
+  Outro caminho: `E2E_CONTEXTO_OS`, `E2E_CONTEXTO_BILLING`, `E2E_CONTEXTO_EXECUCAO`.
 - ~4 GB de RAM livres para os containers (o SQL Server fica limitado a 1,5 GB) e portas livres (tabela abaixo).
 - A primeira subida constroi as tres imagens a partir dos `Dockerfile` de cada repositorio (minutos); as seguintes usam
-  o cache.
+  o cache. **O build usa o working tree de cada repositorio** (o que esta no disco, commitado ou nao), nao um commit
+  especifico: para saber o que foi testado, registre `git rev-parse HEAD` e `git status` dos tres antes de rodar.
+  O `.dockerignore` do OS nao exclui `e2e/`, entao `e2e/.gerado/` (chave de DEV e logs) vai no contexto enviado ao
+  builder local; o `Dockerfile` so copia `src/` e os `.csproj`, entao nada disso entra na imagem.
 
 ## Isolamento (nada do que ja existe na maquina e tocado)
 
@@ -39,6 +43,13 @@ migrations em producao.
   em `e2e/.gerado/` (`.gitignore` da pasta); nada disso vai para o repositorio.
 
 ## Como subir e derrubar
+
+Layout de uso: a partir da raiz do checkout principal do OS Service, com os repositorios irmaos ao lado.
+
+```bash
+cd /e/FIAP/Pos/OficinaMecanica   # (E:\FIAP\Pos\OficinaMecanica no Windows); Billing e Execucao em /e/FIAP/Pos/OficinaMecanica.Billing e .Execucao
+git rev-parse --short HEAD; git status --short   # registre o que sera testado (o build usa o working tree), nos tres repositorios
+```
 
 ```bash
 bash e2e/subir.sh                # gera chaves/senhas, constroi as imagens, sobe e espera /health/ready das tres APIs
@@ -61,9 +72,12 @@ Equivalente manual do derrubar: `docker compose -p oficina-e2e -f e2e/docker-com
 | SQL Server | 14330 | `sqlserver:1433` | `E2E_PORTA_SQL` |
 | MongoDB (rs0) | 27118 | `mongo:27017` | `E2E_PORTA_MONGO` |
 | RabbitMQ AMQP | 56720 | `rabbitmq:5672` | `E2E_PORTA_AMQP` |
-| RabbitMQ UI/management | 15673 | `rabbitmq:15672` | `E2E_PORTA_RABBIT_UI` |
+| RabbitMQ UI/management | 15683 | `rabbitmq:15672` | `E2E_PORTA_RABBIT_UI` |
 | Mailpit UI/API | 18025 | `mailpit:8025` | `E2E_PORTA_MAILPIT_UI` |
 | Mailpit SMTP | 11025 | `mailpit:1025` | `E2E_PORTA_SMTP` |
+
+Nenhuma dessas portas colide com as publicadas pelos composes do OS, do Billing, da Execucao e do Seguranca (inclusive os brokers
+`standalone`, que usam 5673 e 15673): `bash e2e/verificar-portas.sh` le as portas dos arquivos e reprova se houver colisao.
 
 Usuarios/senhas (RabbitMQ, SQL `sa`, `app_os`, `app_billing`) e o segredo do webhook Fake estao em
 `e2e/.gerado/e2e.env`, sorteados na primeira subida. Swagger de cada API: `http://127.0.0.1:<porta>/`.
@@ -84,8 +98,8 @@ cenarios (curl) -> OS :18080 --------\                 /-> Billing :18081 -- SQL
 - **Servicos** em `Development`, com a mensageria **escrita por extenso** como em producao
   (`Mensageria__Transporte=RabbitMq`, `Mensageria__Persistencia=EntityFramework` no OS e no Billing,
   `Mensageria__Outbox=MongoDb` na Execucao) e `Saga__*` com os prazos reais (72 h aprovacao, 48 h pagamento); so o
-  intervalo do sweeper cai de 30 s para 5 s. `Execucao__BaseUrl` esta configurado como no manifest do AKS, mas ainda
-  nao tem leitor neste commit (consulta sincrona e da F3c).
+  intervalo do sweeper cai de 30 s para 5 s. `Execucao__BaseUrl=http://execucao:8080` alimenta a consulta sincrona
+  `GET /api/ordens-de-servico/{id}/execucao` do OS (que repassa o token do chamador a Execucao).
 - **Por que Development**: o gateway Fake do Billing so existe em `Development` (em `Production` ele exige as credenciais
   do Mercado Pago). Como cada repositorio aplica o esquema do banco na partida **so em Development**, as migrations sao
   aplicadas pelo proprio servico ao subir (`dotnet ef database update`, que o CI faz em producao, **nao** e exercitado
@@ -118,17 +132,19 @@ de "fila de producao vazia".
 
 | Cenario | O que valida |
 |---|---|
-| `01-caminho-feliz` | cadastros -> OS -> diagnostico (Execucao) -> orcamento (Billing) -> aprovacao anonima (202) -> estoque reservado -> link de pagamento -> webhook Fake -> reparo -> OS Finalizada; saga, historico, estoque, e-mails, rota sincrona de execucao (se existir) |
+| `01-caminho-feliz` | cadastros -> OS -> diagnostico (Execucao) -> orcamento (Billing) -> aprovacao anonima (202) -> estoque reservado -> link de pagamento -> webhook Fake -> reparo -> OS Finalizada; saga, estoque, e-mails; `historicoStatus` na ordem cronologica em que a API o devolve; rota sincrona `GET /api/ordens-de-servico/{id}/execucao` (`origem: execucao` em tres momentos do fluxo, 401 sem token, 404 de OS inexistente e fallback `origem: saga` / `ExecucaoIndisponivel` com a Execucao congelada) |
 | `02-recusa-do-orcamento` | recusa (202) -> saga `OrcamentoRecusado`, orcamento cancelado no Billing com o motivo, sem pagamento, estoque intacto; 409 nas decisoes seguintes |
 | `03-pagamento-expirado` | vencimento forcado no banco -> `PrazoExpirado` -> `CancelarPagamento` -> estoque devolvido -> OS Cancelada; depois aprovacao **tardia** do gateway: estorno automatico e a saga ignora o `PagamentoEstornado` |
 | `04-execucao-inviavel-com-estorno` | `reparo/inviabilizar` -> estorno no Billing -> estoque so volta depois do `PagamentoEstornado` (prova com o Billing congelado por `docker pause`) -> OS Cancelada |
-| `05-resiliencia-billing-fora` | Billing parado (`docker stop`) e morto (`docker kill`) no meio de dois fluxos; OS e Execucao seguem; mensagem duplicada no broker; ao voltar: um orcamento, um pagamento, uma baixa de estoque e um e-mail por transicao |
+| `05-resiliencia-billing-fora` | Billing parado (`docker stop`) e morto (`docker kill`) no meio de dois fluxos; OS e Execucao seguem; mensagem duplicada no broker; ao voltar: um orcamento, um pagamento, uma baixa de estoque e um e-mail por transicao; a primeira aprovacao do gateway Fake depois do restart responde 200 (sem colisao de id) |
 | `06-idempotencia` | aprovacao dupla simultanea, reenvio de decisao (409), webhook duplicado (mesmo e outro `x-request-id`), 401/503/200 da rota de webhook, segunda finalizacao do reparo |
-| `07-resiliencia-broker-fora` | RabbitMQ parado antes de abrir a OS e com a decisao do cliente em voo: o outbox segura, `/health/ready` fica 200 com broker `Degraded`, os servicos reconectam e o fluxo conclui |
-| `99-verificacoes-finais` | filas `*_error` vazias (API de management), nenhum erro/`Fault` inesperado nos logs, sagas/producao/pagamentos sem nada preso, outbox das tres bases vazio, containers sem restart, estoque de cada peca conferido |
+| `07-resiliencia-broker-fora` | RabbitMQ parado antes de abrir a OS e com a decisao do cliente em voo: o outbox segura, `/health/ready` fica 200 com broker `Degraded`, a rota sincrona `/execucao` cai no fallback `saga` / `ProducaoNaoEnfileirada`, os servicos reconectam e o fluxo conclui |
+| `99-verificacoes-finais` | filas `*_error` e filas de trabalho vazias, lidas de uma listagem **completa** da API de management (API fora do ar, JSON de erro ou menos de tres filas reprovam, nao viram "0"); logs lidos de fato (linhas e `Bus started`) sem `Fault` nem ERR inesperado: a Execucao sem nenhum ERR e com o Information `Requisicao cancelada pelo cliente` do cenario 01; sagas/producao/pagamentos sem nada preso, outbox das tres bases vazio, containers sem restart, estoque de cada peca conferido, metricas da saga no `/metrics` do OS (`oficinamecanica_saga_saga_*`) coerentes com o banco, sem id do gateway Fake repetido nem aviso `Overriding HTTP_PORTS` |
 
-**Esperas**: toda espera tem teto (30 a 120 s) e, ao estourar, imprime o que esperava e o ultimo valor visto; cada cenario
-tem ainda um teto rigido de 900 s no runner. Nada trava.
+**Esperas**: toda espera tem teto e, ao estourar, imprime o que esperava e o ultimo valor visto. Os tetos usados sao 10, 15, 20,
+30, 60, 90 e 120 s (a maioria, 30 ou 60 s; 90 e 120 s so para subida de servico e reconexao do broker). Alem deles: janelas de
+observacao de 1 a 10 s ("nao pode mudar"), `--max-time` de 30 s nas chamadas HTTP e de 10 s na API de management, e um teto
+rigido de 900 s por cenario no runner. Nada trava.
 
 **Como ler o resultado**: linhas `[OK]`/`[FALHA]` sao asserts; `[INFO]` e observacao; cada cenario termina com
 `RESULTADO|<nome>|PASSOU|FALHOU|asserts=N|falhas=M|tempo=Ts`; o runner fecha com um quadro-resumo e sai com codigo 0 so
@@ -147,8 +163,8 @@ bash e2e/verificar-contratos.sh      # exit 0 = identicos; exit 1 = divergencia 
 
 O OS e a fonte da verdade (ADR 0005). Billing e Execucao copiam so o subconjunto que usam, entao a lista de arquivos nao
 e igual nos tres; o script exige que (1) todo golden JSON copiado seja **byte a byte** igual ao do OS (sha256), (2) todo
-tipo `.cs` copiado seja igual ao do OS (os `.cs` do Billing e da Execucao estao com CRLF no working tree e os do OS com
-LF: o script compara o hash dos bytes e, se so o fim de linha difere, aceita com aviso), (3) cada servico tenha todas as
+tipo `.cs` copiado seja igual ao do OS (hoje os 29 tipos do OS, os 17 do Billing e os 11 da Execucao estao em LF, conforme `git ls-files --eol`; se um
+repositorio voltar a ter CRLF no working tree, o script compara o hash dos bytes e, se so o fim de linha difere, aceita com aviso), (3) cada servico tenha todas as
 mensagens do seu lado da conversa e (4) o que Billing e Execucao compartilham seja identico entre si.
 
 ## Arquivos e evidencia
@@ -160,10 +176,14 @@ mensagens do seu lado da conversa e (4) o que Billing e Execucao compartilham se
 | `emitir-token.sh`, `scripts/ferramentas.py` | JWT RS256 de DEV, JWKS, assinatura do webhook, CPF/placa validos e leitura de JSON (so biblioteca padrao + `openssl`) |
 | `executar-cenarios.sh`, `cenarios/` | o runner, a biblioteca (`lib.sh`) e os cenarios `01` a `07` mais `99-verificacoes-finais` |
 | `verificar-contratos.sh` | confere os goldens e os tipos de contrato entre os tres repositorios |
-| `evidencias/AAAA-MM-DD-execucao.md` | saida real de uma execucao completa, defeitos encontrados e estado do Docker antes/depois (`...-saida.txt` e o log bruto) |
+| `verificar-portas.sh` | confere que as portas do e2e nao colidem com as dos composes dos repositorios nem entre si |
+| `evidencias/2026-11-08-execucao.md` e `...-execucao-integrada.md` | registro historico das duas primeiras rodadas (saida real, defeitos achados e estado do Docker antes/depois; `...-saida.txt` e o log bruto) |
+| `evidencias/2026-11-08-execucao-final.md` | evidencia da execucao completa mais recente, a partir do checkout principal (`...-final-saida.txt` e o log bruto) |
 | `.gerado/` (ignorado pelo git) | par RSA, JWKS, `e2e.env` com as senhas de DEV sorteadas e os logs de cada execucao |
 
-Uma execucao completa (7 cenarios + verificacoes finais) leva cerca de 7 minutos depois do build; o `subir.sh` com cache leva ~30 s.
+Uma execucao completa (7 cenarios + verificacoes finais) leva cerca de 6 minutos (medido: 5 min 20 s a 5 min 50 s); o `subir.sh` com
+cache leva ~30 s. Para um ciclo do zero, na ordem: `bash e2e/derrubar.sh`, `bash e2e/subir.sh --regerar` (sorteia chaves e senhas novas
+e reconstroi as imagens), `bash e2e/executar-cenarios.sh` e `bash e2e/verificar-contratos.sh`.
 
 ## Inspecao manual
 
@@ -175,7 +195,7 @@ docker exec -e SQLCMDPASSWORD="$E2E_OS_DB_PASSWORD" $(compose ps -q sqlserver) /
 # MongoDB
 docker exec $(compose ps -q mongo) mongosh --quiet execucao --eval "db.ordens_producao.find({_t:'ordem'},{status:1}).toArray()"
 # Filas e e-mails
-curl -s -u "$E2E_RABBIT_USER:$E2E_RABBIT_PASSWORD" http://127.0.0.1:15673/api/queues/%2F | head -c 600
+curl -s -u "$E2E_RABBIT_USER:$E2E_RABBIT_PASSWORD" http://127.0.0.1:15683/api/queues/%2F | head -c 600
 xdg-open http://127.0.0.1:18025   # Mailpit (no Windows: start http://127.0.0.1:18025)
 ```
 
@@ -183,17 +203,29 @@ xdg-open http://127.0.0.1:18025   # Mailpit (no Windows: start http://127.0.0.1:
 
 - **Seguranca nao incluido**: o JWKS e um stub estatico e o token vem de `emitir-token.sh`. O e2e prova a **validacao**
   de JWT via JWKS nos tres servicos, nao a **emissao** (login/Key Vault) nem a rotacao de chave.
-- **Gateway Fake**: o estado dos pagamentos vive na memoria do Billing e o contador de ids recomeca em
-  `100000000001` a cada restart, enquanto o `BillingDb` guarda os ids anteriores sob indice unico: depois de um restart a
-  simulacao de aprovacao pode responder 409 ate o contador passar dos ids ja gravados. Os cenarios repetem a chamada e
-  registram cada colisao como `[INFO]` (ver o relatorio de evidencia). Nao ha Mercado Pago real nem assinatura de
-  producao.
+- **Gateway Fake**: preferencias e pagamentos vivem na memoria do Billing e somem num restart (por isso os cenarios de
+  queda so criam e pagam o pagamento depois da ultima subida). O id de cada pagamento do gateway parte do relogio a cada
+  partida (16 digitos, crescente entre partidas), porque o `BillingDb` guarda o id com indice unico e sobrevive ao processo.
+  Nao ha Mercado Pago real nem assinatura de producao.
 - **Development, nao Production**: obrigatorio para o gateway Fake; as migrations sao aplicadas pelo proprio servico na
   partida, nao pelo passo `dotnet ef database update` do CI. Mongo sem autenticacao e SQL com `TrustServerCertificate`.
+- **Versao do RabbitMQ**: o e2e roda `rabbitmq:4.4.0-management`, a mesma dos testes de infraestrutura e dos composes dos
+  repositorios; confira a versao do broker do AKS em `OficinaMecanica.Infra/helm/variables.tf` (o e2e nao a le nem a garante).
+- **Imagens fixadas**: `mssql/server:2022-latest@sha256:d38c2a64...` (o digest que os testes de infraestrutura do OS usam; o tag
+  e movel e nenhum tag de patch tem esse digest), `python:3.12.16-alpine` (patch de mesmo digest da imagem local), `mongo:7.0.45`,
+  `rabbitmq:4.4.0-management` e `mailpit:v1.31.0`. As imagens dos servicos usam as bases dos `Dockerfile` de cada repositorio.
 - **Um unico no de cada dependencia**, sem HPA, sem replicas do OS (o sweeper multi-replica nao e exercitado) e sem
   APIM/ingress: as APIs sao chamadas direto.
 - **Prazos de negocio nao esperam o relogio**: o vencimento de 48 h/72 h e forcado no banco.
-- A rota sincrona `GET /api/ordens-de-servico/{id}/execucao` (F3c) nao existe neste commit; o cenario 01 registra o 404.
+- **Metricas da saga**: os contadores do Meter `OficinaMecanica.Saga` aparecem no `/metrics` do OS (prometheus-net); os
+  gauges (`saga_por_estado`, `saga_compensacao_presa`) so existem com `Otel__Endpoint` configurado (o e2e deixa vazio),
+  entao nao sao conferidos aqui. Os contadores podem ficar a maior em retry de commit (ADR 0008): os asserts usam `>=`.
+  O adapter do prometheus-net so observa os Meters a partir da **primeira** leitura do `/metrics` (incrementos anteriores
+  nao aparecem, como ja registra o CLAUDE.md do Billing): `subir.sh` e `executar-cenarios.sh` fazem essa leitura antes de
+  qualquer fluxo. Se subir o ambiente na mao, leia `GET /metrics` do OS uma vez antes de abrir a primeira OS. O mesmo adapter
+  remove uma serie **5 minutos depois da ultima atualizacao** (`MetricsExpireAfter`): por isso os cenarios 01 a 04 e 06 leem a
+  base de cada contador antes do fluxo e conferem o incremento logo depois, e o 99 so confere (contra o banco) as series que o
+  ultimo cenario acabou de atualizar. Rode o 99 em ate 5 minutos do ultimo fluxo.
 - Reivindicacao de fila e FIFO global: os cenarios assumem a fila de producao vazia no inicio (checado como
   pre-condicao) e nao devem rodar em paralelo entre si.
 
