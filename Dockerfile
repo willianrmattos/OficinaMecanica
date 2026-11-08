@@ -21,7 +21,8 @@ RUN dotnet publish src/OficinaMecanica.API/OficinaMecanica.API.csproj -c Release
 FROM base AS final
 WORKDIR /app
 COPY --from=build /app/publish .
-ENV ASPNETCORE_URLS=http://+:8080
-# Utilizando usuario nao-root (ja vem criado na imagem base mcr.microsoft.com/dotnet/aspnet:8.0)
+# A porta 8080 vem do ASPNETCORE_HTTP_PORTS da imagem base (aspnet:8.0); redefinir ASPNETCORE_URLS aqui geraria o aviso
+# "Overriding HTTP_PORTS" a cada boot.
+# Usuario nao-root: a imagem base ja traz o usuario app (UID em $APP_UID).
 USER $APP_UID
 ENTRYPOINT ["dotnet", "OficinaMecanica.API.dll"]
