@@ -5,11 +5,11 @@ Aceito
 
 ## Contexto
 O ADR 0003 fixou a saga orquestrada no OS Service e o ADR 0007 fixou o outbox/inbox e a publicacao antes
-do commit. A implementacao da saga (F3b) precisou decidir o que o desenho deixava em aberto: como um prazo
+do commit. A implementacao da saga precisou decidir o que o desenho deixava em aberto: como um prazo
 (aprovacao do orcamento, pagamento) vira um evento sem timer em memoria, como a saga convive com mensagens
 duplicadas, tardias e fora de ordem, o que fazer quando um servico falha de forma tecnica (`Fault<T>`) e como
-os comandos enviados a Billing e Execucao ficam seguros contra reentrega. Os achados vem do spike F0a
-(`E:\FIAP\Pos\_spikes\mt-ef-saga\FINDINGS.md`) e foram reproduzidos com Testcontainers (SQL Server 2022 e
+os comandos enviados a Billing e Execucao ficam seguros contra reentrega. Os achados vem do spike inicial de validacao
+(ver a secao "Resultados do spike de validacao" do ADR 0007) e foram reproduzidos com Testcontainers (SQL Server 2022 e
 RabbitMQ 4) em `tests/OficinaMecanica.Infrastructure.Tests`.
 
 ## Decisao
@@ -28,7 +28,7 @@ RabbitMQ 4) em `tests/OficinaMecanica.Infrastructure.Tests`.
   ADR 0007). Outro teste com SQL real dispara aprovacao + prazo + copia duplicada da mesma OS em 12 OS ao mesmo tempo e
   exige exatamente uma transicao coerente por OS, nada em `_error` (um deadlock eventual e repetido pelo retry; ver Consequencias).
 - A fila `os-saga` (`Filas.Saga`) nasce quando o bus sobe (`WaitUntilStarted`), com o retry por fora e o
-  outbox/inbox por dentro (`ConfigurarRetryEOutbox`). Isso resolve o risco da F3a: o exchange de
+  outbox/inbox por dentro (`ConfigurarRetryEOutbox`). Isso resolve o risco apontado no ADR 0007 (fila ligada antes do trafego): o exchange de
   `OrdemDeServicoAberta` ja tem fila ligada antes da API aceitar a primeira OS. A saga entra pelos ganchos de
   `AddMensageria` (`AddMensageriaComSaga`), sem segundo bus e sem quebrar o ponto de troca de transporte e
   persistencia nem a guarda fail-closed de producao. Com `Mensageria:Persistencia = Nenhuma` (so Development e

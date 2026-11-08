@@ -3,6 +3,15 @@
 ## Status
 Aceito
 
+## Atualizacao
+A regra "timeout de diagnostico/reparo so alerta" (secao Decisao) nao foi implementada como timer: o codigo so tem os prazos de
+aprovacao e de pagamento (`TipoPrazo`: `Aprovacao` e `Pagamento`, sweeper sobre `SagaPrazos`, ADR 0008). Nao ha timer de diagnostico
+nem de reparo e, portanto, nenhum evento ou alerta automatico nessas etapas. Uma OS parada em `AguardandoDiagnostico`, `EmDiagnostico`
+ou `EmExecucao` e observavel pelas metricas da saga (`saga_por_estado` e `saga_duracao_estado_segundos`, esta so depois de a saga sair do
+estado) e pelo `CurrentState` e o `AtualizadaEm` de `OrdemDeServicoSagas`. Cancelar e decisao do atendimento (`CancelamentoSolicitado`, que a
+saga ignora a partir de `EmExecucao`). Continua valendo que reparo em andamento nao se desfaz por timer. O alerta por idade do estado e
+evolucao futura. O texto original da Decisao foi preservado.
+
 ## Contexto
 Abrir uma OS, gerar orcamento, aguardar aprovacao, cobrar e executar agora cruza tres
 servicos com bancos independentes. Sem transacao distribuida, a consistencia vem de uma
@@ -41,7 +50,7 @@ Regras que a decisao impoe:
 - os estados de compensacao (`CancelandoPagamento`, `Estornando`) tem SLA so de alerta (metrica
   de saga presa); nenhuma decisao automatica se o Billing demorar a responder.
 
-Implementacao (F3b): a maquina de estados esta em `Infrastructure/Saga` e os detalhes (prazos e
+Implementacao da saga: a maquina de estados esta em `Infrastructure/Saga` e os detalhes (prazos e
 sweeper, `PrazoId` vigente, eventos duplicados, tardios e antecipados, `Fault<T>` por comando, ids
 deterministicos dos comandos) estao no ADR 0008. Tres pontos refinam o que este ADR e o plano
 inicial diziam: (1) evento que chega ANTES de a saga existir nao e descartado

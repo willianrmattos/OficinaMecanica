@@ -9,8 +9,8 @@ juntos: sem isso, um processo que cai entre o commit e o publish deixa a OS num 
 servico sabe, e um publish que sai antes de um commit que falha avisa sobre algo que nunca
 existiu. O `AppDbContext` ainda despachava domain events (e-mail, metricas) depois do commit, e
 dentro de um consumer do MassTransit esse despacho acontecia com a transacao do consumer ainda
-aberta e podia se repetir a cada tentativa. Os achados abaixo vem do spike F0a (MassTransit 8.5.12
-+ EF Core 9 + SQL Server 2022 + RabbitMQ 4, `E:\FIAP\Pos\_spikes\mt-ef-saga\FINDINGS.md`) e foram
+aberta e podia se repetir a cada tentativa. Os achados abaixo vem do spike inicial de validacao (MassTransit 8.5.12
++ EF Core 9 + SQL Server 2022 + RabbitMQ 4), resumido na secao "Resultados do spike de validacao" deste ADR, e foram
 reproduzidos com Testcontainers nos testes `Category=Infra` deste repositorio. O Azure SQL
 serverless (erros transitorios reais como o 40613) nao foi exercitado em nenhum dos dois.
 
@@ -70,7 +70,7 @@ serverless (erros transitorios reais como o 40613) nao foi exercitado em nenhum 
   transformaria a queda do RabbitMQ em indisponibilidade total. Por isso `/health/ready` so devolve 503
   quando o SQL Server cai (`SqlServerHealthCheck`, tag `ready`), e traz no corpo o status de cada
   check (o broker aparece `Degraded` com HTTP 200). `/health` exclui os checks `ready` (liveness so
-  confirma que o processo esta de pe). O alerta operacional do broker fica por metrica (F9). Testes
+  confirma que o processo esta de pe). O alerta operacional do broker fica por metrica (ainda pendente). Testes
   Infra param o container do RabbitMQ (200 + `Degraded`) e colocam o banco offline (503).
 - **Guarda de ambiente.** `ValidadorDasOpcoesDaMensageria` (`ValidateOnStart`) so aceita
   `Transporte=EmMemoria` e `Persistencia=Nenhuma` em `Development` e `Testing`; nos demais
@@ -80,6 +80,37 @@ serverless (erros transitorios reais como o 40613) nao foi exercitado em nenhum 
   memoria; o validador tambem recusa o valor indefinido.
 - **Versoes.** EF Core 9.0.22 (o `MassTransit.EntityFrameworkCore 8.5.12` exige EF Core Relational
   9.0.x) e MassTransit 8.5.12, conforme o ADR 0004.
+
+## Resultados do spike de validacao
+Antes de escrever a saga, um spike descartavel (fora deste repositorio) validou o MassTransit 8.5.12 com EF Core 9.0.22, SQL Server 2022 e RabbitMQ 4:
+67 de 67 testes na ultima rodada (8 min 18 s), inclusive com `Process.Kill` real e varias instancias em paralelo. O Azure SQL serverless (erros transitorios
+reais como o 40613) e o envio real de e-mail NAO foram exercitados. O resumo abaixo e autocontido; os achados foram depois reproduzidos com Testcontainers nos
+testes `Category=Infra` deste repositorio.
+
+| Item | Resultado |
+|------|-----------|
+| 1. `EnableRetryOnFailure` do EF x transacao do MassTransit | Passou, hipotese refutada: nao ha `InvalidOperationException`, porque o MassTransit 8.5.12 roda outbox, inbox, repositorio de saga e servico de entrega dentro de `strategy.ExecuteAsync`; a excecao so ocorre em codigo proprio com `BeginTransaction` fora de `CreateExecutionStrategy().ExecuteAsync`. Dentro do consumer o replay do EF e inutil (o `ChangeTracker` velho vira `DbUpdateConcurrencyException`, recuperada pelo `UseMessageRetry`); numa activity de saga a excecao chega embrulhada em `EventExecutionException`. Recomendado: `EnableRetryOnFailure` so quando `IScopedConsumeContextProvider.HasContext` e falso (caminho HTTP), mais `UseMessageRetry` nos endpoints |
+| 2. Saga e agregado na mesma transacao | Passou (opcao em que a activity chama o handler MediatR no MESMO escopo, com `ConcurrencyMode.Pessimistic`): o `SaveChanges` do handler fica dentro da transacao do MassTransit, sem flag no `IUnitOfWork`. Excecao depois da escrita: agregado, saga e saida nao mudam e a mensagem vai para `_error` apos 3 tentativas (sobra so a linha de `InboxState` com `Consumed` nulo, inserida em transacao propria antes do consumer). Controle negativo (handler com OUTRO `DbContext`): agregado gravado 3 vezes mesmo com a mensagem em `_error`. Nao foi preciso o plano alternativo |
+| 3. Concorrencia e duplicata | Passou, com uma falha: 50 pares de eventos distintos da mesma saga (em paralelo e em sequencia) deram 0 mensagens em `_error`, 0 em `_skipped`, 0 deadlocks e 50 de 50 resultados consistentes; duplicata (3 simultaneas e 1 tardia): o inbox deduplica. **`IsolationLevel.Serializable` explicito FALHA**: quebra o servico de entrega do outbox (erro 650 do SQL Server, `READPAST` so vale em READ COMMITTED e REPEATABLE READ) e, sem o bus outbox, gerou 31 a 54 deadlocks em 200 OS. O padrao real do MassTransit 8.5.12 e `RepeatableRead`. Carga tipo HTTP (200 OS): Pessimistic com RepeatableRead (padrao) e Pessimistic com ReadCommitted deram 0 deadlocks e 10 retries; Optimistic deu 115 retries |
+| 4. Publicar antes do `SaveChanges` (caminho HTTP) | Passou: grava o `OutboxMessage` no mesmo commit, o servico de entrega publica e, se o `SaveChanges` falha, a mensagem some junto. Sem `UseBusOutbox` o evento sai mesmo com o save falho. Publicar DEPOIS do `SaveChanges` nao persiste (um `SaveChanges` posterior no mesmo escopo grava a linha encalhada) |
+| 5. Domain events pos-commit sem e-mail fantasma | Passou, com ressalva: o padrao `Database.CurrentTransaction != null` guarda os eventos e os despacha em `TransactionCommittedAsync` (descartados em rollback), com 0 e-mails em rollback no HTTP e no consumer; no modo antigo, dentro do consumer, saem 3 e-mails fantasma (um por tentativa). O despacho pos-commit deve usar um escopo de injecao de dependencia NOVO: no mesmo escopo, um handler que escreve falha com "Cannot issue SAVE TRANSACTION when there is no active transaction" (handler que so le funciona) |
+| 6. Seguranca contra queda | Passou, com `Process.Kill` real em 4 pontos: depois do commit, o outbox e entregue na reinicializacao, com 1 efeito; antes do commit, nada foi gravado; depois da confirmacao do broker e antes de marcar como entregue, 3 copias e 1 efeito; no meio do consumer, a mensagem e reprocessada 1 vez |
+| 7. Sweeper de prazos | Passou, com uma pegadinha: 2 e 4 instancias mais 2 processos, 600 e 1500 linhas, cada uma processada 1 vez e 0 deadlocks; sem as dicas de lock, 59 erros de chave primaria. **As dicas travam o que o plano LE, nao so o `TOP N`**: sem `INDEX(IX_SagaPrazos_Processado_ExpiraEm)` uma instancia pegou todas as linhas e as outras ficaram com 0 |
+| 8. Pacotes | Passou: `MassTransit`, `MassTransit.RabbitMQ` e `MassTransit.EntityFrameworkCore` em 8.5.12; `Microsoft.EntityFrameworkCore.SqlServer` 9.0.22; MediatR 12.2.0; FluentValidation 11.9.0; restore limpo (sem NU1605 nem NU1608) e nenhum pacote `MassTransit*` no major 9 |
+
+Pegadinhas e condicoes que o desenho passou a respeitar:
+- Um evento que chega ANTES de a saga existir e descartado em silencio (sem `_error` nem `_skipped`) e a saga trava: `OnMissingInstance(Fault)` mais `UseMessageRetry`
+  (descartar so em estado final).
+- Um evento tardio com `MessageId` novo em estado final: o `Ignore` de um evento ou de um subconjunto nao basta; todo evento sem transicao no estado precisa estar
+  declarado, senao o MassTransit lanca `UnhandledEventException`.
+- `MassTransitHostOptions.WaitUntilStarted = true`: uma mensagem publicada logo depois do `StartAsync` pode se perder.
+- Ordem dos filtros no endpoint: `UseMessageRetry`, depois `UseEntityFrameworkOutbox`, depois a saga.
+- O projeto que ja existia estava em EF Core 8.0.0: precisou subir para 9.0.x (o `MassTransit.EntityFrameworkCore` 8.5.12 exige o 9) e conferir o `Microsoft.Data.SqlClient`
+  5.1.9 e o `IdentityModel` contra o `JwtBearer` e o `Microsoft.IdentityModel.Protocols` 7.0.3.
+
+Conclusao do spike: a opcao de a activity chamar o handler MediatR no mesmo escopo e viavel, sem mudar os handlers nem o `IUnitOfWork`. Decisoes que dela decorrem: nunca
+`Serializable`; EF retry so fora de consumer; despacho pos-commit em escopo novo; subir o EF Core; dica `INDEX(...)` no sweeper; `OnMissingInstance(Fault)` mais retry
+para o evento que chega antes da saga.
 
 ## Consequencias
 ### Positivas
@@ -101,9 +132,9 @@ serverless (erros transitorios reais como o 40613) nao foi exercitado em nenhum 
   conexao com o banco e impede o auto-pause do Azure SQL serverless: usar `periodSeconds` alto). Os checks
   de prontidao rodam em paralelo e levam ate 3 s, e o `timeoutSeconds` padrao do Kubernetes e 1 s: a
   readiness precisa de `timeoutSeconds >= 5`.
-- **A F3a nao pode ser implantada sozinha.** O exchange fanout de cada contrato so e criado no
+- **A implementacao do outbox nao pode ser implantada sozinha, sem a saga.** O exchange fanout de cada contrato so e criado no
   primeiro publish e, sem fila ligada, o RabbitMQ descarta a mensagem e o outbox esvazia (medido: a
-  1a e a 2a OS criadas sem fila perderam o `OrdemDeServicoAberta`). A F3b (saga) precisa criar a
+  1a e a 2a OS criadas sem fila perderam o `OrdemDeServicoAberta`). A implementacao da saga precisa criar a
   fila antes de a API aceitar trafego, ou reconciliar as OS `Recebida` que ficaram sem saga.
 
 ## Alternativas consideradas

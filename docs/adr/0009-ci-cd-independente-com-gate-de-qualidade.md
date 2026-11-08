@@ -72,9 +72,10 @@ os MESMOS projetos de `tests/*.Tests` (com `Category!=Infra` e `Category=Infra`)
 `Infrastructure.Tests` nao fica sem fase. Cada script tem mutantes proprios (a
 chamada do gate apagada, o gate lendo o numero bruto, cada filtro de exclusao removido, `-strict` retirado, falha do
 kubeconform ignorada, so a primeira pasta validada...). Os casos que dependem do Docker (kubeconform) sao pulados com aviso
-quando ele nao esta ligado. Na ultima execucao completa foram 78 casos e 38 mutantes detectados; na mesma execucao
-(`ci-local.sh`, com o BDD ja nas fases de teste) foram 1059 testes (Contracts 71, Domain 145, Application 301, Integration 114,
-Infrastructure 416, dos quais 62 `Category=Infra`, e Bdd 12) e cobertura de linhas de 96,40% bruta (6231/6464) e 95,27% com as exclusoes (3342/3508).
+quando ele nao esta ligado. Na ultima execucao completa foram 78 casos e 38 mutantes detectados; na medicao de cobertura de
+2026-11-08 (`cobertura.sh` completo, com o BDD nas fases de teste e o gate aprovado) foram 1147 testes (Contracts 71, Domain 153,
+Application 306, Integration 176, Infrastructure 429, dos quais 75 `Category=Infra`, e Bdd 12) e cobertura de linhas de 96,71% bruta
+(6284/6498) e 95,85% com as exclusoes (3395/3542); o registro por assembly esta em `docs/cobertura.md`.
 
 **SonarCloud com Quality Gate bloqueante.** O job `quality` baixa o OpenCover do job anterior (artifact), roda
 `dotnet-sonarscanner begin/build/end` e usa `sonar.qualitygate.wait=true`: se o Quality Gate reprova, o job falha. Projeto e
@@ -225,8 +226,9 @@ dependencia nao pode reiniciar o pod) e `/health/ready` roda os checks da tag `r
   serverless acordando, a probe pode ficar em 503 por alguns ciclos.
 - **`/health/ready` anonimo exposto pela APIM**: a rota repassa qualquer path, entao qualquer cliente da internet pode chamar
   `/oficinaserver/health/ready`. O cache de 5 s limita o custo a uma conexao SQL e uma AMQP a cada 5 s e o corpo nao vaza
-  excecao, mas o endpoint continua publico. Mitigacao pendente, no `OficinaMecanica.Infra`: policy da APIM que bloqueia
-  `/health/ready` e `/metrics` na rota publica (a probe do kubelet bate direto no pod e nunca passa pela APIM).
+  excecao, mas o endpoint continua publico. Mitigacao no `OficinaMecanica.Infra` (ADR 0007 de la): a policy da APIM que devolve
+  404 para `/health/ready` e `/metrics` na rota publica existe e fica ativa quando o Terraform do Infra for aplicado (ainda nao
+  foi); a probe do kubelet bate direto no pod e nunca passa pela APIM.
 - O `Mailpit` do cluster continua sendo SMTP de demonstracao e a UI dele fica exposta por host `nip.io`; nao e canal de
   e-mail de producao.
 

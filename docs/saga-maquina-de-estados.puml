@@ -47,8 +47,12 @@ Cancelada --> [*]
 OrcamentoRecusado --> [*]
 
 note right of EmExecucao
-  Timeout de diagnostico/reparo so gera alerta
-  (evento + metrica); nao estorna sozinho.
+  Nao ha timer de diagnostico nem de reparo: so existem os prazos de
+  aprovacao e de pagamento (SagaPrazos). Uma OS parada em
+  AguardandoDiagnostico, EmDiagnostico ou EmExecucao aparece nas metricas
+  (saga_por_estado, saga_duracao_estado_segundos) e no CurrentState e
+  AtualizadaEm da saga; nada decide nem estorna sozinho. Cancelar e
+  decisao do atendimento (CancelamentoSolicitado, ignorado em EmExecucao).
   Entregue continua manual, fora da saga.
 end note
 
