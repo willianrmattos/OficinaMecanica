@@ -24,7 +24,7 @@ Container_Boundary(api, "OficinaMecanica API (.NET 8)") {
 
     Component(qryHandlers, "Query Handlers", "MediatR IRequestHandler (leitura)", "ObterCliente, ListarClientes, ObterClientePorDocumento, ObterVeiculo, ListarVeiculos, ObterServico, ListarServicos, ObterPeca, ListarPecas, ObterOrdemDeServico, ListarOrdensDeServico (exclui Finalizada/Entregue por padrao, ordena por prioridade de status), ObterTempoMedioServicos.")
 
-    Component(aggregates, "Agregados (DDD)", "Domain Entities / AggregateRoot", "Cliente, Veiculo, OrdemDeServico, Servico, Peca. Encapsulam invariantes e regras de negocio. Fluxo de status da OS controlado pelo dominio (Recebida ate Entregue, com o desvio AguardandoAprovacao -> OrcamentoRecusado). Estoque reservado pela saga na aprovacao do orcamento, antes do pagamento (nao na criacao); liberado nas compensacoes. Fluxo completo da OS em docs/saga-maquina-de-estados.puml.")
+    Component(aggregates, "Agregados (DDD)", "Domain Entities / AggregateRoot", "Cliente, Veiculo, OrdemDeServico, Servico, Peca. Encapsulam invariantes e regras de negocio. Fluxo de status da OS controlado pelo dominio (Recebida ate Entregue, com o desvio AguardandoAprovacao -> OrcamentoRecusado). Estoque reservado pela saga na aprovacao do orcamento, antes do pagamento (nao na criacao); liberado nas compensacoes. Fluxo completo da OS em docs/diagramas/saga-maquina-de-estados.puml.")
 
     Component(valueObjects, "Value Objects", "Domain ValueObject", "Documento: valida CPF e CNPJ com algoritmo de digitos verificadores. Placa: valida formato antigo (ABC1234) e Mercosul (ABC1D23).")
 

@@ -9,7 +9,7 @@ namespace OficinaMecanica.Infrastructure.Saga;
 
 // Orquestrador da OS: coordena Execucao (diagnostico e reparo) e Billing (orcamento e pagamento) por comandos e eventos, e
 // compensa o que ja foi feito quando uma etapa falha. O desenho completo (cada transicao e cada compensacao) esta em
-// docs/saga-maquina-de-estados.puml e as decisoes em docs/adr/0003 e 0008; este arquivo e a traducao literal do diagrama.
+// docs/diagramas/saga-maquina-de-estados.puml e as decisoes em docs/adr/0003 e 0008; este arquivo e a traducao literal do diagrama.
 //
 // Regras que atravessam tudo:
 // - cada passo com efeito colateral e uma activity (Saga/Activities) que chama UM command idempotente da Application no

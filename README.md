@@ -76,12 +76,12 @@ publicado isoladamente eles nao resolvem.
 
 | Ja executado nesta maquina | Ainda nao executado (depende da publicacao) |
 |----------------------------|---------------------------------------------|
-| Build Release e **1147 testes** passando, inclusive os de infraestrutura com SQL Server e RabbitMQ reais em containers; cobertura de linhas de 96,71% (bruta) e 95,85% (com exclusoes), ver [docs/cobertura.md](docs/cobertura.md) | Qualquer execucao do workflow `.github/workflows/ci.yml` no GitHub Actions (a ordem dos jobs e as condicoes `if` so se provam na primeira execucao) |
+| Build Release e **1147 testes** passando, inclusive os de infraestrutura com SQL Server e RabbitMQ reais em containers; cobertura de linhas de 96,71% (bruta) e 95,85% (com exclusoes), ver [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md) | Qualquer execucao do workflow `.github/workflows/ci.yml` no GitHub Actions (a ordem dos jobs e as condicoes `if` so se provam na primeira execucao) |
 | 12 cenarios BDD (Behavior-Driven Development) da Saga, com a API e a maquina de estados reais e Billing/Execucao simulados | SonarCloud (analise e Quality Gate) |
 | `bash scripts/ci-local.sh`: os mesmos passos do job `Build & Test`, completo e verde em 2026-11-08 | Scan Trivy da imagem no pipeline, push no ACR (Azure Container Registry) e deploy no AKS (Azure Kubernetes Service) |
 | Validacao estatica do workflow (`actionlint`), do shell (`shellcheck`) e dos manifests (`kubeconform`); `docker build` da imagem; imagem executada como usuario nao-root, com raiz somente leitura, contra SQL Server e RabbitMQ reais | Migrations aplicadas no `OficinaMecanicaDb` real (Azure SQL) e manifests aplicados em um cluster |
-| Scripts de CI testados com entradas sinteticas e mutantes (`scripts/testar-scripts.sh`: 78 casos e 38 mutantes detectados) | RabbitMQ no cluster, rotas `billingserver`/`execucaoserver` na APIM, segredos dos novos servicos no Key Vault e usuarios SQL dedicados (todos criados pelos repositorios `OficinaMecanica.Infra` e `OficinaMecanica.Banco`, que nao foram aplicados) |
-| Migrations validadas em SQL Server real, a partir da `Initial` | Ruleset de protecao de branch (`scripts/aplicar-ruleset.sh`) |
+| Scripts de CI testados com entradas sinteticas e mutantes (`scripts/testar-scripts.sh`: 76 casos e 38 mutantes detectados) | RabbitMQ no cluster, rotas `billingserver`/`execucaoserver` na APIM, segredos dos novos servicos no Key Vault e usuarios SQL dedicados (todos criados pelos repositorios `OficinaMecanica.Infra` e `OficinaMecanica.Banco`, que nao foram aplicados) |
+| Migrations validadas em SQL Server real, a partir da `Initial` | Atualizacao do ruleset de protecao de branch no GitHub (hoje exige so o `Build & Test`; o JSON versionado acrescenta o `Quality`; comando na [secao de protecao de branch](#protecao-de-branch-ruleset-versionado)) |
 | Stack local com `docker compose` (API, SQL Server, RabbitMQ, Mailpit, observabilidade), com a fila da saga criada na partida | A Saga rodando contra o Billing e a Execucao reais no cluster; Azure SQL serverless acordando durante a Saga |
 | Teste ponta a ponta local dos tres servicos em ambiente Docker isolado: 7 cenarios e as verificacoes finais passaram em 2026-11-08 (8 de 8, 586 asserts; [secao 13](#13-teste-ponta-a-ponta-dos-tres-servicos)) | Integracao real com o Mercado Pago (responsabilidade do Billing, nunca exercitada com credenciais reais) |
 
@@ -309,7 +309,7 @@ A Saga e a espinha dorsal do servico: uma maquina de estados do **MassTransit**
 (`MassTransitStateMachine<OrdemDeServicoSagaState>`), hospedada neste servico porque ele e o
 dono do agregado `OrdemDeServico`. Ela e correlacionada pelo id da OS, persistida no mesmo
 banco (EF Core, tabela `OrdemDeServicoSagas`) e grava as mensagens no mesmo outbox. A
-especificacao e [docs/saga-maquina-de-estados.puml](docs/saga-maquina-de-estados.puml): cada
+especificacao e [docs/diagramas/saga-maquina-de-estados.puml](docs/diagramas/saga-maquina-de-estados.puml): cada
 transicao existe na maquina e tem teste; um teste le o proprio `.puml` e compara com o grafo da
 maquina. Decisoes: [ADR 0003](docs/adr/0003-saga-orquestrada-no-os-service.md),
 [ADR 0007](docs/adr/0007-outbox-inbox-transacional-e-publicacao-antes-do-commit.md) e
@@ -887,7 +887,7 @@ Mesmo padrao do restante do ecossistema: xUnit + FluentAssertions + Moq + Bogus,
 | `OficinaMecanica.Bdd.Tests` | 12 | BDD da saga, com a API e a saga reais e Billing/Execucao programaveis | Nao |
 
 Resumo: Contracts 71, Domain 153, Application 306, Integration 176, Infrastructure 429 (354 sem Docker + 75 com)
-e Bdd 12. Tabela por projeto e cobertura em [docs/cobertura.md](docs/cobertura.md). Ha tambem um script de
+e Bdd 12. Tabela por projeto e cobertura em [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md). Ha tambem um script de
 carga k6 em `stress/` (consulta publica por numero), fora da analise do Sonar.
 
 ### BDD com Reqnroll
@@ -961,7 +961,7 @@ em copias dos scripts e exige que cada um seja detectado.
   arredondamento do relatorio (79,95% apareceria como 80% e passaria). O gate vive no repositorio (script) e nao
   depende so de configuracao externa.
 - **Medicao registrada (2026-11-08)**: 1147 testes passando; cobertura **bruta 96,71%** (6284/6498) e **com
-  exclusoes 95,85%** (3395/3542). Por assembly, exclusoes e justificativas: [docs/cobertura.md](docs/cobertura.md).
+  exclusoes 95,85%** (3395/3542). Por assembly, exclusoes e justificativas: [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md).
 - Exclusoes documentadas (as mesmas no `cobertura.sh`, no Sonar e aqui): `Migrations`, `Program.cs`,
   `DependencyInjection*` e as EF Configurations. `[ExcludeFromCodeCoverage]` e proibido sem ADR (hoje: 0
   ocorrencias em `src/`).
@@ -1004,7 +1004,7 @@ bash scripts/cobertura.sh testes-sem-infra
 dotnet sonarscanner end /d:sonar.token="SEU_TOKEN"
 ```
 
-O relatorio historico fica em [docs/sonarqube-report.md](docs/sonarqube-report.md) (de 2026-08-30, anterior a
+O relatorio historico fica em [docs/relatorios/sonarqube-report.md](docs/relatorios/sonarqube-report.md) (de 2026-08-30, anterior a
 Saga).
 
 ### Analise de Vulnerabilidades (Trivy)
@@ -1013,7 +1013,7 @@ No CI o Trivy escaneia a imagem **antes** do push (job `scan-image`; reprova `HI
 publicada). Localmente, com a imagem construida (`docker compose build api`):
 
 ```bash
-docker compose run --rm trivy      # profile "security": nao sobe com "docker compose up -d"; grava docs/trivy-report-raw.json
+docker compose run --rm trivy      # profile "security": nao sobe com "docker compose up -d"; grava docs/relatorios/trivy-report-raw.json
 ```
 
 Para um scan com saida em tabela no terminal:
@@ -1022,7 +1022,7 @@ Para um scan com saida em tabela no terminal:
 docker run --rm -v //var/run/docker.sock:/var/run/docker.sock aquasec/trivy:latest image --severity CRITICAL,HIGH oficinamecanica-api:latest
 ```
 
-O relatorio historico fica em [docs/trivy-report.md](docs/trivy-report.md) (de 2026-07-12, anterior a Saga; ver as
+O relatorio historico fica em [docs/relatorios/trivy-report.md](docs/relatorios/trivy-report.md) (de 2026-07-12, anterior a Saga; ver as
 [limitacoes](#15-limitacoes-conhecidas-e-pendencias) sobre pacotes vulneraveis).
 
 ---
@@ -1226,9 +1226,21 @@ kubectl rollout status deployment/oficinamecanica-api
 ### Protecao de branch (ruleset versionado)
 
 [.github/rulesets/protect-main-release.json](.github/rulesets/protect-main-release.json) descreve o ruleset do GitHub para `main` e `release`: sem
-exclusao nem force-push, pull request obrigatorio e os checks `Build & Test` e `Quality` exigidos. `bash scripts/aplicar-ruleset.sh [owner/repo] [--dry-run]`
-o cria ou atualiza via `gh api` (idempotente) e **so roda na publicacao**: o GitHub so oferece como obrigatorio um check que ja apareceu, entao o
-ruleset entra **depois do primeiro PR**, quando o CI rodou ao menos uma vez. Nada o executa automaticamente. O Dependabot
+exclusao nem force-push, pull request obrigatorio e os checks `Build & Test` e `Quality` exigidos. Nao ha script: o JSON versionado e a entrada
+direta da GitHub CLI (`gh api --input`), executada a mao por quem administra o repositorio, e nada neste repositorio a dispara.
+
+O ruleset `protect-main-release` **ja existe e esta ativo** no GitHub (id 21858959; conferido so em leitura em 2026-11-09) exigindo apenas o check
+`Build & Test`; o JSON versionado acrescenta o `Quality` (SonarCloud). Por isso o comando e de **atualizacao** (`PUT`), nao de criacao:
+
+```bash
+gh api --method PUT repos/willianrmattos/OficinaMecanica/rulesets/$(gh api repos/willianrmattos/OficinaMecanica/rulesets --jq '.[] | select(.name == "protect-main-release") | .id') --input .github/rulesets/protect-main-release.json
+```
+
+> **Aviso:** so atualizar **depois** de o SonarCloud estar configurado (`SONAR_TOKEN` e as variaveis `SONAR_PROJECT_KEY`/`SONAR_ORGANIZATION`) e de o
+> job `Quality` ter rodado ao menos uma vez (o GitHub so oferece como obrigatorio um check que ja apareceu). Antes disso o check obrigatorio nao existe
+> ou falha, e todo PR fica bloqueado esperando por ele.
+
+O Dependabot
 ([.github/dependabot.yml](.github/dependabot.yml)) acompanha NuGet, GitHub Actions e Docker semanalmente e ignora o major do `MassTransit*`, do
 `Microsoft.EntityFrameworkCore*` e das imagens `dotnet/aspnet` e `dotnet/sdk`.
 
@@ -1369,9 +1381,14 @@ bash e2e/subir.sh                 # gera chaves e senhas de DEV, constroi as ima
 bash e2e/executar-cenarios.sh     # roda os cenarios e as verificacoes finais (--so 01,03 escolhe cenarios; --sem-finais pula as finais)
 bash e2e/verificar-contratos.sh   # confere que os goldens e os tipos de contrato sao identicos entre os tres repositorios
 bash e2e/derrubar.sh              # remove so o projeto oficina-e2e (--imagens remove tambem as tres imagens)
+
+# para chamar as APIs a mao (depois do subir.sh): JWT RS256 de DEV com o papel escolhido (admin | atendente | mecanico)
+TOKEN=$(bash e2e/emitir-token.sh admin)
 ```
 
 Uma execucao completa leva cerca de 6 minutos depois do build.
+
+O e2e e uma **ferramenta local, rodada sob demanda**: nenhum workflow do CI o executa. O mapa de portas (APIs, Swagger, SQL Server, MongoDB, RabbitMQ, Mailpit e o JWKS de teste), a lista do que sobe e as instrucoes de inspecao manual estao no [e2e/README.md](e2e/README.md). As chaves e senhas de DEV, sorteadas na primeira subida, ficam em `e2e/.gerado/` (ignorada pelo git: nunca vai para o repositorio nem para a imagem).
 
 ### Cenarios do e2e
 
@@ -1388,10 +1405,14 @@ Uma execucao completa leva cerca de 6 minutos depois do build.
 
 ### Resultado da execucao final
 
-A execucao final (2026-11-08, [e2e/evidencias/2026-11-08-execucao-final.md](e2e/evidencias/2026-11-08-execucao-final.md), com a saida bruta em
-`2026-11-08-execucao-final-saida.txt`) passou nos **8 de 8** (7 cenarios e as verificacoes finais), com **586 asserts e nenhuma falha**, sobre o codigo ja com a correcao
-da ordem do historico de status da OS e do tratamento de requisicao cancelada pelo cliente. As duas evidencias anteriores no mesmo diretorio sao registro historico das
-rodadas anteriores (514 asserts na primeira, 574 na segunda). Os tres ciclos de e2e acharam e fecharam 4 defeitos de baixa gravidade (a ordem do historico de status da
+A ultima execucao completa (2026-11-08, [e2e/evidencias/2026-11-08-execucao-final.md](e2e/evidencias/2026-11-08-execucao-final.md), com a saida bruta em
+`2026-11-08-execucao-final-saida.txt`) passou nos **8 de 8** (7 cenarios e as verificacoes finais), com **586 asserts e nenhuma falha**. O codigo testado ja tinha a correcao da
+ordem do historico de status da OS e, na Execucao, o tratamento da requisicao cancelada pelo cliente. As duas evidencias anteriores no mesmo diretorio sao registro historico das
+rodadas anteriores (514 asserts na primeira, 574 na segunda).
+
+**Essa execucao e anterior as mudancas finais do tratamento de erros dos tres servicos**: o aborto da conexao quando a resposta ja foi iniciada, o reconhecimento do
+cancelamento de comando SQL como abandono do cliente (OS e Billing), o log sem o caminho da requisicao e a ordem das metricas HTTP. Essas mudancas tem testes proprios, mas o e2e ainda
+nao foi reexecutado com elas: **reexecute-o antes de publicar** e registre uma evidencia nova com os commits testados. Os tres ciclos de e2e acharam e fecharam 4 defeitos de baixa gravidade (a ordem do historico de status da
 OS, os ids do gateway Fake depois de um restart, um aviso `HTTP_PORTS` no boot e um ERR de cancelamento de requisicao na Execucao); os detalhes estao em
 [e2e/evidencias](e2e/evidencias/).
 
@@ -1411,6 +1432,8 @@ O que o teste **nao** prova (lista completa em [e2e/README.md](e2e/README.md)):
 ---
 
 ## 14. Decisoes, diagramas e relatorios
+
+A pasta `docs/` e organizada por tipo de documento (`adr/`, `rfc/`, `c4/`, `diagramas/`, `relatorios/`, mais o `openapi.json`); o indice esta em [docs/README.md](docs/README.md).
 
 ### RFCs (decisoes de "por que essa direcao")
 
@@ -1440,17 +1463,17 @@ O que o teste **nao** prova (lista completa em [e2e/README.md](e2e/README.md)):
 
 | Documento | Arquivo |
 |-----------|---------|
-| Saga - maquina de estados (a especificacao testada contra o codigo) | [docs/saga-maquina-de-estados.puml](docs/saga-maquina-de-estados.puml) |
-| Clean Architecture (camadas e dependencias) | [docs/clean-architecture.puml](docs/clean-architecture.puml) |
-| C4 Nivel 1 - Contexto do sistema | [docs/c4-nivel1-contexto.puml](docs/c4-nivel1-contexto.puml) |
-| C4 Nivel 2 - Containers | [docs/c4-nivel2-container.puml](docs/c4-nivel2-container.puml) |
-| C4 Nivel 3 - Componentes | [docs/c4-nivel3-componente.puml](docs/c4-nivel3-componente.puml) |
-| Event Storming | [docs/event-storming.pdf](docs/event-storming.pdf) |
+| Saga - maquina de estados (a especificacao testada contra o codigo) | [docs/diagramas/saga-maquina-de-estados.puml](docs/diagramas/saga-maquina-de-estados.puml) |
+| Clean Architecture (camadas e dependencias) | [docs/diagramas/clean-architecture.puml](docs/diagramas/clean-architecture.puml) |
+| C4 Nivel 1 - Contexto do sistema | [docs/c4/c4-nivel1-contexto.puml](docs/c4/c4-nivel1-contexto.puml) |
+| C4 Nivel 2 - Containers | [docs/c4/c4-nivel2-container.puml](docs/c4/c4-nivel2-container.puml) |
+| C4 Nivel 3 - Componentes | [docs/c4/c4-nivel3-componente.puml](docs/c4/c4-nivel3-componente.puml) |
+| Event Storming | [docs/diagramas/event-storming.pdf](docs/diagramas/event-storming.pdf) |
 | Diagrama de Sequencia (autenticacao e abertura de OS) | [docs/diagramas/diagrama-de-sequencia.jpg](docs/diagramas/diagrama-de-sequencia.jpg) |
 | Contrato OpenAPI versionado | [docs/openapi.json](docs/openapi.json) |
-| Evidencia de cobertura de testes | [docs/cobertura.md](docs/cobertura.md) |
-| Relatorio SonarQube (qualidade, 2026-08-30) | [docs/sonarqube-report.md](docs/sonarqube-report.md) |
-| Relatorio Trivy (vulnerabilidades, 2026-07-12) | [docs/trivy-report.md](docs/trivy-report.md) |
+| Evidencia de cobertura de testes | [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md) |
+| Relatorio SonarQube (qualidade, 2026-08-30) | [docs/relatorios/sonarqube-report.md](docs/relatorios/sonarqube-report.md) |
+| Relatorio Trivy (vulnerabilidades, 2026-07-12) | [docs/relatorios/trivy-report.md](docs/relatorios/trivy-report.md) |
 
 O diagrama de sequencia em imagem descreve a autenticacao e a abertura da OS **como eram antes da Saga** (a abertura termina no `201`, sem o
 `OrdemDeServicoAberta` no outbox); o fluxo da Saga esta no `.puml` e nos diagramas da [secao 4](#4-a-saga-orquestrada). Os relatorios do SonarQube e do Trivy
@@ -1473,14 +1496,15 @@ Registradas com honestidade; as marcadas como **bloqueante** precisam ser resolv
 - **Pacotes NuGet transitivos vulneraveis, pre-existentes**: `dotnet list package --vulnerable --include-transitive` (executado em 2026-11-08, so consulta)
   aponta em `OficinaMecanica.API` e `OficinaMecanica.Infrastructure` `Microsoft.IdentityModel.JsonWebTokens` e `System.IdentityModel.Tokens.Jwt` 7.0.3
   (severidade moderada) e `System.Security.Cryptography.Pkcs` 8.0.1 (alta e moderada); nos projetos de teste, `System.Net.Http` 4.3.0 e
-  `System.Text.RegularExpressions` 4.3.0 (altas, so de teste). O `docs/trivy-report.md` (anterior a Saga) ja listava pacotes NuGet com correcao disponivel;
+  `System.Text.RegularExpressions` 4.3.0 (altas, so de teste). O `docs/relatorios/trivy-report.md` (anterior a Saga) ja listava pacotes NuGet com correcao disponivel;
   `Azure.Identity` e `Microsoft.Data.SqlClient`, que aquele relatorio apontava, hoje resolvem para 1.12.1 e 5.1.9 (acima das versoes com correcao que ele citava). O scan Trivy
   da imagem **nao foi reexecutado** nesta versao: se houver correcao publicada para algum achado `HIGH`, o job `scan-image` reprova e bloqueia o push da
   imagem. Tratar antes do primeiro push (ver a [secao 16](#16-publicacao-ainda-nao-executada)).
 - **`Quality` pulado em PR de fork** conta como satisfeito para o GitHub: PR de fork nao passa pelo Sonar e depende de revisao.
 - O runner do GitHub precisa alcancar o Azure SQL (regra de firewall do servidor), a mesma premissa do pipeline anterior.
-- O ruleset replica a protecao que ja existia (`main` e `release`: sem delete nem force-push, PR obrigatorio) e acrescenta os checks obrigatorios; nao foi
-  possivel comparar com o que esta configurado no GitHub: conferir na publicacao.
+- O ruleset `protect-main-release` ja existe e esta ativo no GitHub (conferido so em leitura em 2026-11-09), exigindo apenas `Build & Test`; o JSON versionado
+  acrescenta o `Quality`. Atualizar so depois de o SonarCloud estar configurado e de o job `Quality` ter rodado ao menos uma vez, senao todo PR fica
+  bloqueado (ver [Protecao de branch](#protecao-de-branch-ruleset-versionado)).
 - O job `deploy-to-aks` falha se o cluster estiver parado (`az aks stop`).
 
 **Rede e exposicao (APIM)**
@@ -1529,7 +1553,7 @@ Registradas com honestidade; as marcadas como **bloqueante** precisam ser resolv
 
 - Os **diagramas em imagem (JPG) dos repositorios `OficinaMecanica.Infra` e `OficinaMecanica.Banco` estao desatualizados** em relacao aos novos servicos, e o
   [diagrama de sequencia](docs/diagramas/diagrama-de-sequencia.jpg) deste repositorio e anterior a Saga.
-- Os relatorios `docs/sonarqube-report.md` e `docs/trivy-report.md` sao fotos historicas.
+- Os relatorios `docs/relatorios/sonarqube-report.md` e `docs/relatorios/trivy-report.md` sao fotos historicas.
 
 ---
 
@@ -1576,14 +1600,19 @@ Todos **ainda nao executados**.
    enxergam os secrets de Actions). `gh variable set` e `gh secret set` fazem o mesmo pela linha de comando.
 6. [ ] **Enviar a branch e abrir o primeiro PR para `release`.** Empurrar `feature/microsservicos` para o `origin` e abrir o PR **para `release`**: o `CI` roda pela primeira vez
    (`Build & Test` e `Quality`; PR nao toca o Azure nem publica imagem). A `release` do `origin` (no ultimo fetch local) guarda a versao monolitica anterior, e a branch ja inclui o merge dela.
-7. [ ] **Aplicar o ruleset**, **depois que o CI rodou ao menos uma vez** (o GitHub so oferece como obrigatorio um check que ja apareceu; com o ruleset ativo, push direto em
-   `main`/`release` passa a ser recusado): `bash scripts/aplicar-ruleset.sh --dry-run` para conferir e depois `bash scripts/aplicar-ruleset.sh`.
+7. [ ] **Atualizar o ruleset `protect-main-release`**, **so depois** de o SonarCloud estar configurado (passo 5) e de o job `Quality` ter rodado ao menos uma vez
+   (passo 6; o GitHub so oferece como obrigatorio um check que ja apareceu, e sem isso todo PR fica bloqueado esperando um check que nao existe ou falha). O ruleset
+   **ja existe e esta ativo** no GitHub exigindo so o `Build & Test`, entao o comando e de atualizacao (`PUT`), com o JSON versionado como entrada:
+
+   ```bash
+   gh api --method PUT repos/willianrmattos/OficinaMecanica/rulesets/$(gh api repos/willianrmattos/OficinaMecanica/rulesets --jq '.[] | select(.name == "protect-main-release") | .id') --input .github/rulesets/protect-main-release.json
+   ```
 8. [ ] **Antes do primeiro deploy**, conferir: a folga de CPU do no (`kubectl describe node`); o RabbitMQ no namespace `messaging` e os tres segredos no Key Vault; o Service
    `oficinamecanica-execucao` (Execucao) no mesmo namespace; e que as migrations `AdicionaPagamentoEMensageria` e `AdicionaSagaEPrazos` sao compativeis com o banco atual
    (as OS ja existentes ficam fora da saga e respondem 409 em aprovar, recusar e cancelar).
 9. [ ] **Merge do PR em `release`.** O `push` em `release` dispara `Scan Image`, `Build & Push` e `Deploy to AKS` **pela primeira vez**: imagem no ACR, migrations no banco real e
    rollout no **mesmo Deployment de producao** (homologacao e producao compartilham o cluster). Verificar o rollout, `/health/ready` e a fila `os-saga` no RabbitMQ.
 10. [ ] **PR de `release` para `main`** (o merge e feito pelo responsavel pelo repositorio). O `push` em `main` repete o pipeline de publicacao e tambem grava a tag `latest`.
-11. [ ] **Pos-publicacao** (fora deste repositorio): preencher o badge e o link do SonarCloud em [docs/cobertura.md](docs/cobertura.md); conferir, logo apos o apply do Infra, que a
+11. [ ] **Pos-publicacao** (fora deste repositorio): preencher o badge e o link do SonarCloud em [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md); conferir, logo apos o apply do Infra, que a
     policy da APIM que devolve 404 para `/health/ready` e `/metrics` na rota publica esta ativa (chamar `/oficinaserver/health/ready`); confirmar a premissa de path da APIM chamando `/oficinaserver/health`; criar o dashboard e os alertas das metricas da saga;
     executar uma OS de ponta a ponta no cluster, com os tres servicos, e atualizar a tabela de estado da [secao 1](#1-visao-geral).

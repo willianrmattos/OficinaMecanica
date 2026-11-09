@@ -24,7 +24,7 @@ Saga **orquestrada**, com o orquestrador no **OS Service** (dono do agregado
 `OrdemDeServico`): `MassTransitStateMachine<OrdemDeServicoSagaState>`, correlacionada
 pelo id da OS, persistida no mesmo banco do servico (EF Core) junto com o outbox.
 O orquestrador envia **comandos** a Billing e Execucao e reage aos **eventos** de
-resposta. Estados, transicoes e compensacoes estao em `docs/saga-maquina-de-estados.puml`.
+resposta. Estados, transicoes e compensacoes estao em `docs/diagramas/saga-maquina-de-estados.puml`.
 
 Regras que a decisao impoe:
 - toda etapa com efeito colateral tem compensacao (estoque, orcamento, pagamento/estorno,

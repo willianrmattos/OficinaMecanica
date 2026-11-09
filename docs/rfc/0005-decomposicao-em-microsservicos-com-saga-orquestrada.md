@@ -45,7 +45,7 @@ transacionais; REST sincrono so para consulta e para os pontos de entrada (clien
 staff, mecanico, webhook do Mercado Pago). Nenhum servico le o banco de outro.
 
 Saga: maquina de estados do MassTransit no OS Service, correlacionada pelo id da OS
-(ver `docs/saga-maquina-de-estados.puml` e o ADR 0003). Fluxo feliz: OS aberta ->
+(ver `docs/diagramas/saga-maquina-de-estados.puml` e o ADR 0003). Fluxo feliz: OS aberta ->
 diagnostico -> orcamento -> aprovacao do cliente (estoque reservado) -> pagamento ->
 reparo -> OS finalizada. Compensacoes: orcamento recusado/expirado (cancela o orcamento),
 pagamento nao concluido (cancela e libera estoque), execucao inviavel apos o
@@ -90,4 +90,4 @@ validam o JWT do Seguranca.
 | Mercado Pago (Checkout Pro, webhook, estorno) | ADR no repositorio Billing | Quando o Billing for implementado |
 | MongoDB Atlas e fila com claim atomico | ADR no repositorio Execucao | Quando a Execucao for implementada |
 | RabbitMQ no AKS, usuario de banco dedicado por servico | ADRs nos repositorios Infra e Banco | Quando a infraestrutura for descrita em Terraform |
-| C4 nivel 3 (componentes do OS Service com a saga) | `docs/c4-nivel3-componente.puml` | Atualizado com a implementacao da saga |
+| C4 nivel 3 (componentes do OS Service com a saga) | `docs/c4/c4-nivel3-componente.puml` | Atualizado com a implementacao da saga |

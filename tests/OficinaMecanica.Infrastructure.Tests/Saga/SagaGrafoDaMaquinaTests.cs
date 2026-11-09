@@ -6,7 +6,7 @@ using OficinaMecanica.Infrastructure.Tests.Support;
 
 namespace OficinaMecanica.Infrastructure.Tests.Saga;
 
-// O diagrama docs/saga-maquina-de-estados.puml e a especificacao: este teste o LE (ver DiagramaDaSaga) e o compara com o grafo que
+// O diagrama docs/diagramas/saga-maquina-de-estados.puml e a especificacao: este teste o LE (ver DiagramaDaSaga) e o compara com o grafo que
 // o MassTransit gera da maquina, entao acrescentar, remover ou redirecionar uma transicao so de um dos lados reprova. O grafo
 // traz dois recortes das transicoes que movem a saga, e e neles que comparo: que eventos movem cada estado (estado -> evento) e
 // para onde cada evento leva (evento -> destino). Nao comparo o trio (origem, evento, destino) porque o grafo nao liga as duas

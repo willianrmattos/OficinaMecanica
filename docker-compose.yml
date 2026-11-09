@@ -186,7 +186,7 @@ services:
     volumes:
       - //var/run/docker.sock:/var/run/docker.sock
       - trivy_cache:/root/.cache/trivy
-      - ./docs:/reports
+      - ./docs/relatorios:/reports
     command: >
       image
       --format json

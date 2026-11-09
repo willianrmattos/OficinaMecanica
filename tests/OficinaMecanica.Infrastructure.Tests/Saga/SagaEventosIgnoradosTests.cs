@@ -21,7 +21,7 @@ public class SagaEventosIgnoradosTests
         nameof(EstornoFalhou), nameof(ExecucaoFinalizada), nameof(ExecucaoInviavel), nameof(CancelamentoSolicitado), nameof(PrazoExpirado)
     };
 
-    // Eventos com transicao (ou tratamento proprio) em cada estado, conforme docs/saga-maquina-de-estados.puml. Todo o resto
+    // Eventos com transicao (ou tratamento proprio) em cada estado, conforme docs/diagramas/saga-maquina-de-estados.puml. Todo o resto
     // tem que ser ignorado. PrazoExpirado aparece onde ha prazo a decidir: la o que e ignorado e o prazo que nao e o vigente.
     private static readonly Dictionary<string, string[]> EventosTratados = new()
     {

@@ -7,7 +7,7 @@ using OficinaMecanica.Infrastructure.Tests.Support;
 
 namespace OficinaMecanica.Infrastructure.Tests.Saga;
 
-// Um teste por transicao do caminho feliz do docs/saga-maquina-de-estados.puml, cada um partindo do estado de verdade
+// Um teste por transicao do caminho feliz do docs/diagramas/saga-maquina-de-estados.puml, cada um partindo do estado de verdade
 // (alcancado pelos eventos anteriores) e afirmando o estado da saga, o status da OS, o estoque e os comandos enviados.
 public class SagaCaminhoFelizTests
 {

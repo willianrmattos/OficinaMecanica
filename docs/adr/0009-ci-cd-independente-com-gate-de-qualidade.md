@@ -72,10 +72,10 @@ os MESMOS projetos de `tests/*.Tests` (com `Category!=Infra` e `Category=Infra`)
 `Infrastructure.Tests` nao fica sem fase. Cada script tem mutantes proprios (a
 chamada do gate apagada, o gate lendo o numero bruto, cada filtro de exclusao removido, `-strict` retirado, falha do
 kubeconform ignorada, so a primeira pasta validada...). Os casos que dependem do Docker (kubeconform) sao pulados com aviso
-quando ele nao esta ligado. Na ultima execucao completa foram 78 casos e 38 mutantes detectados; na medicao de cobertura de
+quando ele nao esta ligado. Na ultima execucao completa foram 76 casos e 38 mutantes detectados; na medicao de cobertura de
 2026-11-08 (`cobertura.sh` completo, com o BDD nas fases de teste e o gate aprovado) foram 1147 testes (Contracts 71, Domain 153,
 Application 306, Integration 176, Infrastructure 429, dos quais 75 `Category=Infra`, e Bdd 12) e cobertura de linhas de 96,71% bruta
-(6284/6498) e 95,85% com as exclusoes (3395/3542); o registro por assembly esta em `docs/cobertura.md`.
+(6284/6498) e 95,85% com as exclusoes (3395/3542); o registro por assembly esta em `docs/relatorios/cobertura.md`.
 
 **SonarCloud com Quality Gate bloqueante.** O job `quality` baixa o OpenCover do job anterior (artifact), roda
 `dotnet-sonarscanner begin/build/end` e usa `sonar.qualitygate.wait=true`: se o Quality Gate reprova, o job falha. Projeto e
@@ -123,8 +123,18 @@ exige. A API em `Production` nunca migra sozinha (so em `Development`). E a deci
 explicito no CI, com `ASPNETCORE_ENVIRONMENT=Production` no manifesto); este pipeline a aplica no job `deploy-to-aks`.
 
 **Ruleset versionado e `Quality` obrigatorio.** `.github/rulesets/protect-main-release.json` replica a protecao ja existente
-(`main` e `release`: sem delete nem force-push, PR obrigatorio) e exige os checks `Build & Test` e `Quality`;
-`scripts/aplicar-ruleset.sh` cria/atualiza o ruleset via `gh api` e so roda na publicacao.
+(`main` e `release`: sem delete nem force-push, PR obrigatorio) e exige os checks `Build & Test` e `Quality`. Nao ha script
+para aplica-lo: o JSON versionado e a entrada direta da GitHub CLI (`gh api --input`), executada a mao por quem administra o
+repositorio, e nada neste repositorio a dispara. O ruleset `protect-main-release` **ja existe e esta ativo** no GitHub exigindo
+so o `Build & Test` (conferido so em leitura em 2026-11-09), entao o comando e de atualizacao (`PUT`), nao de criacao:
+
+```bash
+gh api --method PUT repos/willianrmattos/OficinaMecanica/rulesets/$(gh api repos/willianrmattos/OficinaMecanica/rulesets --jq '.[] | select(.name == "protect-main-release") | .id') --input .github/rulesets/protect-main-release.json
+```
+
+A ordem importa: so atualizar depois de o SonarCloud estar configurado (`SONAR_TOKEN` e as variaveis `SONAR_*`) e de o job
+`Quality` ter rodado ao menos uma vez. Antes disso o check obrigatorio nao existe ou falha, e todo PR fica bloqueado esperando
+por ele.
 
 **OpenAPI versionado.** `docs/openapi.json` e gerado pela API compilada (`swagger tofile`, ferramenta fixada em
 `dotnet-tools.json`) e o CI falha se ele divergir da API; o arquivo tem fim de linha LF fixo (`.gitattributes`).

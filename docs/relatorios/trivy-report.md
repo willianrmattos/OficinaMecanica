@@ -138,7 +138,7 @@ Exigem correcao antes do proximo deploy em producao.
 | # | Acao | Impacto |
 |---|------|---------|
 | 6 | Avaliar remocao de `perl-base` da imagem (sem fix para 3 CVEs CRITICAL/HIGH) | Eliminacao de superficie de ataque |
-| ~~7~~ | ~~Adicionar usuario nao-root no Dockerfile~~ — **feito** (`USER $APP_UID`, ver `docs/sonarqube-report.md`) | Mitigacao de impacto em caso de RCE |
+| ~~7~~ | ~~Adicionar usuario nao-root no Dockerfile~~ — **feito** (`USER $APP_UID`, ver `docs/relatorios/sonarqube-report.md`) | Mitigacao de impacto em caso de RCE |
 | 8 | Adicionar scan Trivy no CI/CD com `--exit-code 1` para CRITICAL/HIGH | Prevencao de regressao |
 
 ### Recorrente
@@ -154,13 +154,13 @@ Exigem correcao antes do proximo deploy em producao.
 ## 8. Como Executar o Scan
 
 ```bash
-# Subir a API e rodar o scan (gera docs/trivy-report-raw.json, filtrado CRITICAL/HIGH/MEDIUM)
+# Subir a API e rodar o scan (gera docs/relatorios/trivy-report-raw.json, filtrado CRITICAL/HIGH/MEDIUM)
 docker compose build api && docker compose run --rm trivy
 
 # Scan direto (sem Compose)
 docker run --rm \
   -v //var/run/docker.sock:/var/run/docker.sock \
-  -v "$(pwd)/docs:/reports" \
+  -v "$(pwd)/docs/relatorios:/reports" \
   aquasec/trivy:latest image \
   --format table \
   oficinamecanica-api:latest
@@ -168,7 +168,7 @@ docker run --rm \
 # Scan com saida JSON completa (todas as severidades, usado para gerar este relatorio)
 docker run --rm \
   -v //var/run/docker.sock:/var/run/docker.sock \
-  -v "$(pwd)/docs:/reports" \
+  -v "$(pwd)/docs/relatorios:/reports" \
   aquasec/trivy:latest image \
   --format json \
   --output /reports/trivy-full.json \

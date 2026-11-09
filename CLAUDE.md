@@ -4,7 +4,7 @@
 
 Backend .NET 8 (EF Core 9) com DDD, Clean Architecture e CQRS (MediatR) para gestao de oficina mecanica. Em evolucao para o OS Service da saga: publica mensagens de integracao pelo outbox do MassTransit/RabbitMQ (ver secao "Mensageria") e hospeda a saga orquestrada da OS (ver secao "Saga (F3b)").
 
-O `README.md` foi reescrito para descrever o OS Service do ecossistema de microsservicos (visao geral, Saga e por que orquestrada, comunicacao, testes, observabilidade, CI/CD, execucao local, limitacoes e roteiro de publicacao); a evidencia de cobertura esta em `docs/cobertura.md`.
+O `README.md` foi reescrito para descrever o OS Service do ecossistema de microsservicos (visao geral, Saga e por que orquestrada, comunicacao, testes, observabilidade, CI/CD, execucao local, limitacoes e roteiro de publicacao); a evidencia de cobertura esta em `docs/relatorios/cobertura.md`.
 
 ## Estrutura do Projeto
 
@@ -23,9 +23,9 @@ tests/
   OficinaMecanica.Contracts.Tests/    # Goldens JSON dos contratos de mensagem
   OficinaMecanica.Tests.Common/       # Builders de entidades com Bogus, compartilhados por Domain.Tests e Application.Tests
 k8s/                                    # Manifests Kubernetes (Deployment, Service, Ingress, HPA, SecretProviderClass; Mailpit) - ver secao "Kubernetes"
-scripts/                                # Scripts de CI/CD e qualidade (cobertura + gate, guardrail do MassTransit, OpenAPI, kubeconform, ruleset) e os testes deles - ver secao "CI/CD"
-.github/                                # workflows/ci.yml, rulesets/protect-main-release.json (versionado, aplicado so na publicacao) e dependabot.yml
-docs/                                   # ADRs (adr/), RFCs, diagramas .puml e o contrato OpenAPI versionado (openapi.json)
+scripts/                                # Scripts de CI/CD e qualidade (cobertura + gate, guardrail do MassTransit, OpenAPI, kubeconform) e os testes deles - ver secao "CI/CD"
+.github/                                # workflows/ci.yml, rulesets/protect-main-release.json (versionado; entrada direta do `gh api`, atualizado a mao pelo usuario) e dependabot.yml
+docs/                                   # Organizada por pasta (indice em docs/README.md): adr/ (ADRs), rfc/ (RFCs), c4/ (C4 niveis 1 a 3), diagramas/ (saga, clean architecture, event storming, sequencia), relatorios/ (cobertura, SonarQube, Trivy) e o contrato OpenAPI versionado na raiz (openapi.json)
 local/                                  # Configs da stack de observabilidade do docker-compose (Prometheus, Loki, Alloy, Grafana) - ver secao "Docker"
 e2e/                                    # Teste ponta a ponta local dos tres servicos: ambiente Docker isolado (projeto de Compose `oficina-e2e`) com OS, Billing e Execucao + SQL Server, MongoDB e RabbitMQ reais, JWKS de teste no lugar do Seguranca e gateway Fake; resultado e evidencias em e2e/evidencias; ver e2e/README.md
 ```
@@ -134,7 +134,7 @@ Recebida -> EmDiagnostico -> AguardandoAprovacao -> AguardandoPagamento -> EmExe
                                     +-> OrcamentoRecusado   +-> Cancelada
 ```
 
-`Cancelada` tambem sai de `Recebida`, `EmDiagnostico` e `AguardandoAprovacao`; de `EmExecucao` so como compensacao (execucao inviavel/estorno). Transicoes controladas pelo dominio (`OrdemDeServico.cs`, dicionario `TransicoesPermitidas`). Fluxo completo da saga: `docs/saga-maquina-de-estados.puml`, decisoes em `docs/adr/0003|0006` e `docs/rfc/0005`.
+`Cancelada` tambem sai de `Recebida`, `EmDiagnostico` e `AguardandoAprovacao`; de `EmExecucao` so como compensacao (execucao inviavel/estorno). Transicoes controladas pelo dominio (`OrdemDeServico.cs`, dicionario `TransicoesPermitidas`). Fluxo completo da saga: `docs/diagramas/saga-maquina-de-estados.puml`, decisoes em `docs/adr/0003|0006` e `docs/rfc/0005`.
 
 - **Enum persistido como int, nunca renumerar**: `OrcamentoRecusado=0 ... Entregue=6`, `AguardandoPagamento=7`, `Cancelada=8`. Por isso a listagem nao ordena mais pelo numero (ver abaixo).
 - **Historico de status em ordem cronologica**: `OrdemDeServico.HistoricoStatus` ordena por `DataAlteracao` e, em empate, pela posicao do status no fluxo (`OrdemDeServico.PosicaoNoFluxo`); quem le o agregado (DTO, metricas) nao depende da consulta. O banco entrega as linhas na ordem do indice da chave (`Guid` aleatorio, sem relacao com o tempo), e foi isso que fez a API devolver o historico embaralhado; `AsSplitQuery` nao interfere (a consulta do historico so ordena pela chave da OS). Nao ha coluna sequencial para desempatar (exigiria migration); o desempate pela posicao vale porque cada status entra uma unica vez e as transicoes so avancam. Os testes `Category=Infra` (`HistoricoDeStatusComSqlTests`) gravam as chaves em ordem inversa a do tempo.
@@ -259,7 +259,7 @@ Infraestrutura de mensageria do OS Service (F3a). Decisoes e achados do spike em
 
 ## Saga (F3b)
 
-Orquestrador da OS em `Infrastructure/Saga`. A ESPECIFICACAO e `docs/saga-maquina-de-estados.puml` (cada transicao existe na maquina e tem teste de comportamento; `SagaGrafoDaMaquinaTests` LE o puml e compara com o grafo da maquina dois recortes, que eventos movem cada estado e para onde cada evento leva, e o trio origem + evento -> destino, que o grafo nao expoe, fica com os testes de comportamento de cada transicao; o rotulo de cada seta e `Evento1 | Evento2 [condicao]`, com `Fault<Comando>` valendo o evento `FalhaAo<Comando>`); decisoes em `docs/adr/0003` e `docs/adr/0008`; aqui fica so o que e preciso para mexer no codigo.
+Orquestrador da OS em `Infrastructure/Saga`. A ESPECIFICACAO e `docs/diagramas/saga-maquina-de-estados.puml` (cada transicao existe na maquina e tem teste de comportamento; `SagaGrafoDaMaquinaTests` LE o puml e compara com o grafo da maquina dois recortes, que eventos movem cada estado e para onde cada evento leva, e o trio origem + evento -> destino, que o grafo nao expoe, fica com os testes de comportamento de cada transicao; o rotulo de cada seta e `Evento1 | Evento2 [condicao]`, com `Fault<Comando>` valendo o evento `FalhaAo<Comando>`); decisoes em `docs/adr/0003` e `docs/adr/0008`; aqui fica so o que e preciso para mexer no codigo.
 
 - **Composicao**: o `Program.cs` chama `AddMensageriaComSaga(configuration)` = `AddServicosDaSaga` (opcoes `Saga__*` com `ValidateOnStart`, `IPrazoRepository`, sweeper, activities no escopo) + `AddMensageria` com a saga nos ganchos (`AddSagaDaOrdemDeServico` em `registrarConsumers`, `ReceiveEndpointDaSaga` em `configurarEndpoints`). Teste que precisa de mais consumers usa as tres pecas direto (ver `Support/AmbienteDaSagaInfra`). Com `Mensageria__Persistencia=Nenhuma` (so Development/Testing) o repositorio da saga e o em memoria.
 - **Estado** (`OrdemDeServicoSagaState`, tabela `OrdemDeServicoSagas`, mesmo `AppDbContext`, mapa aplicado em `OnModelCreating`): `CorrelationId` = `OrdemDeServicoId`, `CurrentState`, `Numero`, `OrcamentoId?`, `PagamentoId?`, `PrazoAprovacaoId?`/`PrazoPagamentoId?` (prazo VIGENTE de cada tipo; nulo quando a etapa termina), `CancelamentoPorStaff`, `MotivoCancelamento?` (motivo do encerramento, guardado ate o passo que o aplica), `CriadaEm`, `AtualizadaEm`. Sem `SetCompletedWhenFinalized`: a linha fica nos finais.
@@ -380,7 +380,7 @@ Servicos no docker compose (`docker compose up -d` sobe todos):
 
 Credenciais SonarQube: `admin` / valor de `SONAR_ADMIN_PASSWORD` no `.env` (default sugerido no `.env.example`: `Admin@Sonar2024`)  
 Dashboard do projeto: `http://localhost:9000/dashboard?id=oficina-mecanica`  
-Relatorio de qualidade: `docs/sonarqube-report.md`
+Relatorio de qualidade: `docs/relatorios/sonarqube-report.md`
 
 Notas importantes:
 - `InvariantGlobalization` deve ser `false` no `OficinaMecanica.API.csproj` — o SqlClient precisa da cultura `en-us`. Definir como `true` quebra a conexao com o banco mesmo que `DOTNET_SYSTEM_GLOBALIZATION_INVARIANT=false` esteja no docker-compose (a propriedade do csproj e compilada no binario e tem precedencia)
@@ -509,24 +509,27 @@ Autenticacao no Azure so por **OIDC** (`OficinaMecanica.Infra/github_oidc/`), se
 | `verificar-workflow.sh` | guarda: job com `id-token` so executa `actions/*` e `azure/*` |
 | `exportar-swagger.sh [--verificar]` | gera `docs/openapi.json` (`swagger tofile`) ou confere que ele esta em dia |
 | `validar-k8s.sh` | renderiza `${IMAGE}` e valida `k8s/oficinamecanica-api` e `k8s/mailpit` com o kubeconform (Docker) |
-| `testar-scripts.sh` | casos + mutantes dos scripts acima, do `ci.yml`, do ruleset e do `ci-local.sh`; 78 casos e 38 mutantes detectados |
+| `testar-scripts.sh` | casos + mutantes dos scripts acima, do `ci.yml`, do ruleset e do `ci-local.sh`; 76 casos e 38 mutantes detectados |
 | `ci-local.sh [--sem-infra]` | os mesmos passos do job `Build & Test`, na ordem do workflow |
-| `aplicar-ruleset.sh` | cria/atualiza o ruleset `protect-main-release` via `gh api` (so na publicacao) |
 
 **Cobertura** (gate de 80% de linhas sobre o numero "com exclusoes"; o bruto e publicado ao lado). Exclusoes documentadas, as mesmas no `cobertura.sh`, no Sonar e aqui:
 `Migrations`, `Program.cs`, `DependencyInjection*` e as EF Configurations (`Data/Configurations`). `[ExcludeFromCodeCoverage]` e proibido sem ADR (o coverlet o honra e o codigo some das duas
 medicoes; o `cobertura.sh` lista as ocorrencias). `CompilerGeneratedAttribute` nao entra em `coverage.runsettings` de proposito (inflaria o numero).
 
-**Medicao integrada (F3b + F3c + F7, a integracao do `origin/release` e a ordem cronologica do historico de status, 2026-11-08)**: `bash scripts/ci-local.sh` completo verde com o BDD nas fases de teste (rodado antes da correcao do historico; depois dela rodei o build, os testes de todos os projetos, o `cobertura.sh` completo e o `exportar-swagger.sh --verificar`, todos verdes); testes Contracts 71, Domain 153, Application 306, Integration 176, Infrastructure 429 (354 sem Docker + 75 `Category=Infra`), Bdd 12, 1147 no total (5 vieram do `release`: `MetricasNegocioEventHandlersTests`, `MetricasDeNegocioBackgroundServiceTests` e `JsonWebKeySetRetrieverTests`; 23 sao da ordem do historico de status; 65 sao do tratamento do abandono do cliente no middleware de excecoes e das metricas HTTP por codigo de resposta). Cobertura de linhas mesclada: **bruta 96,71%** (6284/6498) e **95,85% com as exclusoes documentadas** (3395/3542); `testar-scripts.sh`: 78 casos e 38 mutantes; `docs/openapi.json` regenerado com a rota `GET /api/ordens-de-servico/{id}/execucao`. As medicoes por fase abaixo ficam como registro de cada uma.
+**Medicao integrada (F3b + F3c + F7, a integracao do `origin/release` e a ordem cronologica do historico de status, 2026-11-08)**: `bash scripts/ci-local.sh` completo verde com o BDD nas fases de teste (rodado antes da correcao do historico; depois dela rodei o build, os testes de todos os projetos, o `cobertura.sh` completo e o `exportar-swagger.sh --verificar`, todos verdes); testes Contracts 71, Domain 153, Application 306, Integration 176, Infrastructure 429 (354 sem Docker + 75 `Category=Infra`), Bdd 12, 1147 no total (5 vieram do `release`: `MetricasNegocioEventHandlersTests`, `MetricasDeNegocioBackgroundServiceTests` e `JsonWebKeySetRetrieverTests`; 23 sao da ordem do historico de status; 65 sao do tratamento do abandono do cliente no middleware de excecoes e das metricas HTTP por codigo de resposta). Cobertura de linhas mesclada: **bruta 96,71%** (6284/6498) e **95,85% com as exclusoes documentadas** (3395/3542); `testar-scripts.sh`: 76 casos e 38 mutantes (remedido em 2026-11-09, depois de remover o `aplicar-ruleset.sh`, que tinha 2 casos); `docs/openapi.json` regenerado com a rota `GET /api/ordens-de-servico/{id}/execucao`. As medicoes por fase abaixo ficam como registro de cada uma.
 
 **Medicao da F7 isolada (2026-11-08)**: testes Contracts 71, Domain 145, Application 287, Integration 97, Infrastructure 326 (267 sem Docker + 59 `Category=Infra`), 926 no total. Cobertura de linhas mesclada (todos os projetos de teste, inclusive Infra): **bruta 95,7%** (5840/6098; Application 96,4%, Infrastructure 97,7%, Domain 90,6%, API 74,4%, Contracts 100%) e **93,9% com as exclusoes documentadas** (2957/3149). `bash scripts/ci-local.sh` completo verde em 9 min 13 s; `testar-scripts.sh`: 78 casos e 38 mutantes detectados; `actionlint` e `shellcheck` limpos. Mutacoes provadas numa copia fora do repo: apagar a chamada do gate em `cobertura.sh` reprova o `testar-scripts`; uma action de terceiros no job com `id-token` reprova o `verificar-workflow.sh` e o `testar-scripts`; remover `Trava.WaitAsync` do `HealthCheckComCache`, `tentativa.WaitAsync` do `RabbitMqHealthCheck` ou o `when (!cancellationToken.IsCancellationRequested)` do `SqlServerHealthCheck` faz os testes FALHAREM (em 13 s, 53 s e 14 s no total; nenhum trava).
 
-**Ruleset e dependabot**: `.github/rulesets/protect-main-release.json` (main e release: sem delete nem force-push, PR obrigatorio, checks `Build & Test` e `Quality`; aplicado so na
-publicacao por `scripts/aplicar-ruleset.sh`). `.github/dependabot.yml` ignora o major de `MassTransit*` e de `Microsoft.EntityFrameworkCore*` (9 -> 10 so com a migracao para net10.0) e o major
+**Ruleset e dependabot**: `.github/rulesets/protect-main-release.json` (main e release: sem delete nem force-push, PR obrigatorio, checks `Build & Test` e `Quality`) e a entrada direta
+da GitHub CLI: nao ha script (o `aplicar-ruleset.sh` deixou de existir) e quem executa e o usuario, a mao. O OS **ja tem** um ruleset
+`protect-main-release` ATIVO no GitHub (id 21858959, conferido so em leitura) exigindo SO o `Build & Test`, entao o comando e de
+ATUALIZACAO (`PUT`), nao de criacao: `gh api --method PUT repos/willianrmattos/OficinaMecanica/rulesets/$(gh api repos/willianrmattos/OficinaMecanica/rulesets --jq '.[] | select(.name == "protect-main-release") | .id') --input .github/rulesets/protect-main-release.json`. **So aplicar depois** de o SonarCloud estar
+configurado (`SONAR_TOKEN` + variaveis `SONAR_*`) e de o job `Quality` ter rodado ao menos uma vez: o JSON passa a exigir o `Quality`, e sem isso todo PR
+fica bloqueado esperando um check que nao existe ou falha. `.github/dependabot.yml` ignora o major de `MassTransit*` e de `Microsoft.EntityFrameworkCore*` (9 -> 10 so com a migracao para net10.0) e o major
 das imagens `dotnet/aspnet` e `dotnet/sdk`.
 
 **Pendencias para publicar**: (1) **BLOQUEANTE**: fixar por SHA completo todas as actions de terceiros do `ci.yml` (`docker/*`, `aquasecurity/trivy-action`, `dorny/test-reporter`; hoje por tag, que e
-mutavel); (2) criar `SONAR_TOKEN` e as variaveis `SONAR_*` no repositorio; (3) aplicar o ruleset; (4) o workflow so foi validado localmente (`actionlint`, `shellcheck`, `kubeconform`, `docker build`, scripts e
+mutavel); (2) criar `SONAR_TOKEN` e as variaveis `SONAR_*` no repositorio; (3) atualizar o ruleset no GitHub (`PUT`, comando acima), so depois de (2) e de o `Quality` ter rodado ao menos uma vez; (4) o workflow so foi validado localmente (`actionlint`, `shellcheck`, `kubeconform`, `docker build`, scripts e
 testes), a ordem dos jobs e as condicoes `if` so se provam na primeira execucao; (5) APIM: a policy que devolve 404 para `/health/ready` e `/metrics` na rota publica existe no OficinaMecanica.Infra (ADR 0007) e fica ativa quando o Terraform do Infra for aplicado (ainda nao foi); conferir logo apos o apply.
 
 **API server do AKS sem restricao de IP**: nao criei nenhum mecanismo de `authorized_ip_ranges` pro cluster - o runner do GitHub Actions (hospedado, IP dinamico) nao teria como ser adicionado a

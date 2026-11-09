@@ -28,8 +28,8 @@ migrations em producao.
 - A primeira subida constroi as tres imagens a partir dos `Dockerfile` de cada repositorio (minutos); as seguintes usam
   o cache. **O build usa o working tree de cada repositorio** (o que esta no disco, commitado ou nao), nao um commit
   especifico: para saber o que foi testado, registre `git rev-parse HEAD` e `git status` dos tres antes de rodar.
-  O `.dockerignore` do OS nao exclui `e2e/`, entao `e2e/.gerado/` (chave de DEV e logs) vai no contexto enviado ao
-  builder local; o `Dockerfile` so copia `src/` e os `.csproj`, entao nada disso entra na imagem.
+  O `.dockerignore` do OS exclui `e2e/`, entao `e2e/.gerado/` (chave de DEV e logs) nao vai no contexto enviado ao
+  builder local; alem disso o `Dockerfile` so copia `src/` e os `.csproj`, entao nada disso entra na imagem.
 
 ## Isolamento (nada do que ja existe na maquina e tocado)
 

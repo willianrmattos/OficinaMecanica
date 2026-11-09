@@ -4,7 +4,7 @@ namespace OficinaMecanica.Infrastructure.Tests.Support;
 
 public sealed record TransicaoDoDiagrama(string Origem, string Evento, string Destino);
 
-// Le as transicoes de docs/saga-maquina-de-estados.puml, que e a especificacao da saga, para o teste do grafo compara-la com a
+// Le as transicoes de docs/diagramas/saga-maquina-de-estados.puml, que e a especificacao da saga, para o teste do grafo compara-la com a
 // maquina de verdade. Cada linha de transicao tem a forma
 //   Origem --> Destino : Evento1 | Evento2 [condicao] (comentario)\n/ passos\n(efeito na OS)
 // e so o texto ate o primeiro "\n" literal (barra invertida e n) diz o evento: os eventos sao separados por "|", condicoes
@@ -23,19 +23,19 @@ public static class DiagramaDaSaga
     private static readonly Regex Falha = new(@"^Fault<(?<comando>\w+)>$", RegexOptions.Compiled);
     private static readonly Regex NomeDeEvento = new(@"^\w+$", RegexOptions.Compiled);
 
-    // Sobe os diretorios a partir do assembly de teste ate achar docs/saga-maquina-de-estados.puml (a raiz do repositorio).
+    // Sobe os diretorios a partir do assembly de teste ate achar docs/diagramas/saga-maquina-de-estados.puml (a raiz do repositorio).
     public static string Localizar()
     {
         var inicio = AppContext.BaseDirectory;
         for (var diretorio = new DirectoryInfo(inicio); diretorio is not null; diretorio = diretorio.Parent)
         {
-            var candidato = Path.Combine(diretorio.FullName, "docs", NomeDoArquivo);
+            var candidato = Path.Combine(diretorio.FullName, "docs", "diagramas", NomeDoArquivo);
             if (File.Exists(candidato))
                 return candidato;
         }
 
         throw new FileNotFoundException(
-            $"Não encontrei docs/{NomeDoArquivo} subindo os diretórios a partir de '{inicio}'. O teste do grafo da saga compara a máquina com esse diagrama e precisa dele no repositório.");
+            $"Não encontrei docs/diagramas/{NomeDoArquivo} subindo os diretórios a partir de '{inicio}'. O teste do grafo da saga compara a máquina com esse diagrama e precisa dele no repositório.");
     }
 
     public static IReadOnlyList<TransicaoDoDiagrama> Carregar() => Interpretar(File.ReadAllText(Localizar()));
