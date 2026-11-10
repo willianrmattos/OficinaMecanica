@@ -21,8 +21,8 @@ import hashlib
 import hmac
 import json
 import os
-import random
 import re
+import secrets
 import subprocess
 import sys
 import time
@@ -106,7 +106,7 @@ def assinar_webhook(segredo: str, data_id: str, request_id: str, ts: str | None 
 
 def cpf_valido() -> str:
     while True:
-        base = [random.randint(0, 9) for _ in range(9)]
+        base = [secrets.randbelow(10) for _ in range(9)]
         if len(set(base)) == 1:
             continue
         for tamanho in (9, 10):
@@ -118,7 +118,7 @@ def cpf_valido() -> str:
 
 def placa_mercosul() -> str:
     letras = "ABCDEFGHJKLMNPRSTUVWXYZ"
-    return f"{''.join(random.choice(letras) for _ in range(3))}{random.randint(0, 9)}{random.choice(letras)}{random.randint(0, 99):02d}"
+    return f"{''.join(secrets.choice(letras) for _ in range(3))}{secrets.randbelow(10)}{secrets.choice(letras)}{secrets.randbelow(100):02d}"
 
 
 def rabbit_duplicar(base: str, usuario: str, senha: str, fila: str) -> str:
