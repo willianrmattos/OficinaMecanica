@@ -528,9 +528,10 @@ configurado (`SONAR_TOKEN` + variaveis `SONAR_*`) e de o job `Quality` ter rodad
 fica bloqueado esperando um check que nao existe ou falha. `.github/dependabot.yml` ignora o major de `MassTransit*` e de `Microsoft.EntityFrameworkCore*` (9 -> 10 so com a migracao para net10.0) e o major
 das imagens `dotnet/aspnet` e `dotnet/sdk`.
 
-**Pendencias para publicar**: (1) **BLOQUEANTE**: fixar por SHA completo todas as actions de terceiros do `ci.yml` (`docker/*`, `aquasecurity/trivy-action`, `dorny/test-reporter`; hoje por tag, que e
-mutavel); (2) criar `SONAR_TOKEN` e as variaveis `SONAR_*` no repositorio; (3) atualizar o ruleset no GitHub (`PUT`, comando acima), so depois de (2) e de o `Quality` ter rodado ao menos uma vez; (4) o workflow so foi validado localmente (`actionlint`, `shellcheck`, `kubeconform`, `docker build`, scripts e
-testes), a ordem dos jobs e as condicoes `if` so se provam na primeira execucao; (5) APIM: a policy que devolve 404 para `/health/ready` e `/metrics` na rota publica existe no OficinaMecanica.Infra (ADR 0007) e fica ativa quando o Terraform do Infra for aplicado (ainda nao foi); conferir logo apos o apply.
+**Actions fixadas por SHA (2026-11-09)**: todas as actions do `ci.yml` (de terceiros e do GitHub) usam `uses: <action>@<sha completo> # <versao>`; o SHA veio da tag que o workflow usava, resolvida no dia, e o conteudo do commit nao foi auditado (o pin impede mover a tag depois, nao prova que o commit e confiavel); o Dependabot (`github-actions`) propoe as atualizacoes no mesmo formato. O Trivy estava como `0.28.0`, tag que nao existe no repositorio da action; o pin aponta para a `v0.28.0`.
+**Pendencias para publicar**:
+(1) criar `SONAR_TOKEN` e as variaveis `SONAR_*` no repositorio; (2) atualizar o ruleset no GitHub (`PUT`, comando acima), so depois de (1) e de o `Quality` ter rodado ao menos uma vez; (3) o workflow so foi validado localmente (`actionlint`, `shellcheck`, `kubeconform`, `docker build`, scripts e
+testes), a ordem dos jobs e as condicoes `if` so se provam na primeira execucao; (4) APIM: a policy que devolve 404 para `/health/ready` e `/metrics` na rota publica existe no OficinaMecanica.Infra (ADR 0007) e fica ativa quando o Terraform do Infra for aplicado (ainda nao foi); conferir logo apos o apply.
 
 **API server do AKS sem restricao de IP**: nao criei nenhum mecanismo de `authorized_ip_ranges` pro cluster - o runner do GitHub Actions (hospedado, IP dinamico) nao teria como ser adicionado a
 uma lista fixa sem um passo extra no workflow pra liberar/revogar IP a cada execucao (`az aks update`), adicionando minutos de espera por deploy pra uma protecao que ja e coberta pela autenticacao: sem

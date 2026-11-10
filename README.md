@@ -1483,14 +1483,14 @@ sao fotos historicas, anteriores a esta versao.
 
 ## 15. Limitacoes conhecidas e pendencias
 
-Registradas com honestidade; as marcadas como **bloqueante** precisam ser resolvidas antes da publicacao.
+Registradas com honestidade; nenhuma esta marcada como **bloqueante** hoje, e as que vierem a ser marcadas precisam ser resolvidas antes da publicacao.
 
 **Pipeline e publicacao**
 
-- **Bloqueante: actions de terceiros pinadas por tag, nao por SHA.** O `ci.yml` referencia `aquasecurity/trivy-action`, `dorny/test-reporter`,
-  `docker/*`, `azure/*` e `actions/*` por tag de versao, que e mutavel (quem controla a action pode mover a tag para outro codigo). Antes do primeiro
-  push real, todas precisam ser fixadas pelo **SHA completo** do commit, conferido no repositorio de cada action. Depois, o Dependabot de `github-actions`
-  mantem os SHAs.
+- **Actions fixadas por SHA completo (feito em 2026-11-09), sem auditoria do conteudo.** Todas as actions do `ci.yml` (`actions/*`, `azure/*`, `docker/*`,
+  `aquasecurity/trivy-action`, `dorny/test-reporter`) usam `uses: <action>@<sha completo> # <versao>`. O SHA veio da tag que o workflow usava, resolvida no dia; o conteudo
+  daquele commit nao foi auditado: o pin impede que a tag seja movida depois, mas nao prova que o commit de hoje e confiavel. O Dependabot de `github-actions`
+  propoe as atualizacoes mantendo o formato `@sha # versao`. O Trivy estava referenciado como `0.28.0`, tag que nao existe no repositorio da action; o pin aponta para a `v0.28.0`.
 - **O workflow novo nunca rodou no GitHub.** A ordem dos jobs e as condicoes `if` so se provam na primeira execucao real; so a separacao de privilegios
   e o valor do gate (`COBERTURA_MINIMA: "80"`) tem teste automatico.
 - **Pacotes NuGet transitivos vulneraveis, pre-existentes**: `dotnet list package --vulnerable --include-transitive` (executado em 2026-11-08, so consulta)
@@ -1583,10 +1583,10 @@ Registradas com honestidade; as marcadas como **bloqueante** precisam ser resolv
 
 ### Passos, na ordem
 
-Todos **ainda nao executados**.
+Todos **ainda nao executados**, exceto o passo 1.
 
-1. [ ] **Fixar as actions de terceiros por SHA completo** em `.github/workflows/ci.yml`, com um comentario da versao ao lado (item **bloqueante** da
-   [secao 15](#15-limitacoes-conhecidas-e-pendencias)). Sem isso, nao publicar.
+1. [x] **Actions fixadas por SHA completo** em `.github/workflows/ci.yml`, com a versao num comentario ao lado (feito em 2026-11-09; ver a
+   [secao 15](#15-limitacoes-conhecidas-e-pendencias)). O Dependabot mantem os SHAs.
 2. [ ] **Rodar o scan Trivy da imagem localmente** (`docker compose build api` e `docker compose run --rm trivy`) e tratar os achados `HIGH`/`CRITICAL` com correcao
    disponivel, em especial os pacotes NuGet transitivos listados nas limitacoes: o job `scan-image` os reprova antes do push.
 3. [ ] **Criar os repositorios do Billing e da Execucao** no GitHub (`willianrmattos/OficinaMecanica.Billing` e `willianrmattos/OficinaMecanica.Execucao`, ainda vazios,
