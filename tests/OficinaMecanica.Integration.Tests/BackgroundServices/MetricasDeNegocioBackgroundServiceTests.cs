@@ -7,6 +7,7 @@ using OficinaMecanica.Application.Observabilidade;
 using OficinaMecanica.Domain.Entities;
 using OficinaMecanica.Domain.Enums;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Integration.Tests.Support;
 
 namespace OficinaMecanica.Integration.Tests.BackgroundServices;
 
@@ -19,6 +20,7 @@ namespace OficinaMecanica.Integration.Tests.BackgroundServices;
 // CustomWebApplicationFactory) - ou seja, nao existe uma segunda instancia "de
 // verdade" rodando nesse host de teste que possa competir com a que eu crio aqui e
 // contaminar a medicao.
+[Collection(ColecaoDeMetricas.Nome)]
 public class MetricasDeNegocioBackgroundServiceTests : IClassFixture<CustomWebApplicationFactory>
 {
     private readonly CustomWebApplicationFactory _factory;

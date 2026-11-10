@@ -12,11 +12,13 @@ using OficinaMecanica.Domain.Enums;
 using OficinaMecanica.Domain.Interfaces;
 using OficinaMecanica.Infrastructure.Data;
 using OficinaMecanica.Infrastructure.Saga;
+using OficinaMecanica.Integration.Tests.Support;
 
 namespace OficinaMecanica.Integration.Tests.Services;
 
 // O ciclo de coleta das metricas de negocio: o tempo medio por status (que ja existia) e, no mesmo ciclo, o retrato das sagas que
 // alimenta os gauges. Roda um ciclo de verdade (o primeiro acontece na partida do servico) sobre EF InMemory.
+[Collection(ColecaoDeMetricas.Nome)]
 public class MetricasDeNegocioBackgroundServiceTests
 {
     private static async Task<MetricasDeNegocioBackgroundService> CriarAsync(
