@@ -19,9 +19,9 @@ x-saude-dotnet: &saude-dotnet
 
 services:
   sqlserver:
-    # Fixado por digest, o mesmo dos testes de infraestrutura do OS (16.0.4260.1): o tag 2022-latest e movel e nenhum tag de
-    # patch (2022-CU22 a CU27) tem esse digest.
-    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:d38c2a64812d775f844088e4e44ab33846eefc61157431bf9c8a3943a534c22e
+    # Fixado pelo tag de patch, o mesmo dos testes de infraestrutura do OS: o tag 2022-latest e movel, e o digest de um tag
+    # que andou pode deixar de ser servido pelo registro.
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "${E2E_SA_PASSWORD:-}"
@@ -44,7 +44,7 @@ services:
   # banco), o mesmo desenho do OficinaMecanica.Banco/sql/criar-usuarios.sql. As tabelas nascem das migrations de cada
   # servico (aplicadas por ele mesmo na partida em Development, ver README).
   sql-init:
-    image: mcr.microsoft.com/mssql/server:2022-latest@sha256:d38c2a64812d775f844088e4e44ab33846eefc61157431bf9c8a3943a534c22e
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
     depends_on:
       sqlserver:
         condition: service_healthy

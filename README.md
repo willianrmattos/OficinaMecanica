@@ -919,7 +919,7 @@ Toda leitura que depende de resposta assincrona espera com teto de 10 s e reprov
 
 ### Testes de infraestrutura (Testcontainers)
 
-Marcados `[Trait("Category","Infra")]`, sobem **SQL Server 2022** (imagem fixada por digest) e **RabbitMQ**
+Marcados `[Trait("Category","Infra")]`, sobem **SQL Server 2022** (`2022-CU27-ubuntu-22.04`, tag de patch) e **RabbitMQ**
 (`rabbitmq:4.4.0-management`) reais em containers Docker, com um banco e um virtual host novos por teste. Provam
 o que mock nenhum prova: outbox atomico no caminho HTTP (commit entrega, rollback nao); publicar depois do save
 como controle negativo; mensagem duplicada consumida uma vez; excecoes de negocio direto para `_error` e falha
