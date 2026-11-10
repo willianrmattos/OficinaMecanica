@@ -218,6 +218,11 @@ public class MensageriaExtensionsTests
         services.AddSingleton<EstrategiaObservada>();
         await using var provedor = services.BuildServiceProvider(validateScopes: true);
         var harness = provedor.GetRequiredService<MassTransit.Testing.ITestHarness>();
+        // O consumer monta o DbContext na primeira mensagem, e numa máquina lenta isso passa do tempo de inatividade padrão do
+        // harness (curto): Consumed.Any() devolveria false sem a mensagem ter sido processada. Deixo a inatividade enorme e só
+        // o TestTimeout limita a espera, igual ao AmbienteDaSaga.
+        harness.TestTimeout = TimeSpan.FromSeconds(20);
+        harness.TestInactivityTimeout = TimeSpan.FromHours(1);
         await harness.Start();
 
         await harness.Bus.Publish(new MensagemDeTeste(Guid.NewGuid(), Guid.NewGuid()));
