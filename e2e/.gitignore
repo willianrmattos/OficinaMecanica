@@ -1,0 +1,3 @@
+# Chaves RSA de DEV, JWKS, senhas geradas e logs: nunca versionar.
+.gerado/
+__pycache__/

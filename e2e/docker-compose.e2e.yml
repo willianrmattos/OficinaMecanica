@@ -1,0 +1,270 @@
+# Ambiente ponta a ponta LOCAL dos tres microsservicos (OS Service, Billing, Execucao) conversando de verdade:
+# RabbitMQ, SQL Server e MongoDB (replica set) reais, gateway de pagamento Fake e um JWKS de DEV no lugar do Seguranca.
+#
+# Optei por um compose proprio e isolado (project name fixo, volumes e rede proprios, sem container_name) em vez de
+# subir os composes de cada repositorio: os deles fixam container_name e portas padrao, o que colidiria com o que ja
+# existe na maquina. Tudo aqui sai com `docker compose -p oficina-e2e down -v` sem tocar em mais nada.
+#
+# Use os scripts (subir.sh / derrubar.sh): eles geram o par RSA, o JWKS e as senhas de DEV em .gerado/ e passam
+# --env-file. Nenhuma credencial vive neste arquivo; as portas do host sao publicadas so em 127.0.0.1.
+name: oficina-e2e
+
+x-saude-dotnet: &saude-dotnet
+  # A imagem aspnet nao tem curl nem wget: o GET sai por /dev/tcp, recurso do bash.
+  test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8080 && printf 'GET /health/ready HTTP/1.0\r\nHost: localhost\r\n\r\n' >&3 && grep -q '200 OK' <&3"]
+  interval: 10s
+  timeout: 6s
+  retries: 12
+  start_period: 30s
+
+services:
+  sqlserver:
+    # Fixado pelo tag de patch, o mesmo dos testes de infraestrutura do OS: o tag 2022-latest e movel, e o digest de um tag
+    # que andou pode deixar de ser servido pelo registro.
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "${E2E_SA_PASSWORD:-}"
+      MSSQL_PID: "Developer"
+      # Um servidor para os dois bancos; o limite evita ocupar a memoria da maquina de desenvolvimento.
+      MSSQL_MEMORY_LIMIT_MB: "${E2E_SQL_MEMORIA_MB:-1536}"
+    ports:
+      - "127.0.0.1:${E2E_PORTA_SQL:-14330}:1433"
+    volumes:
+      - sqlserver_data:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -C -Q 'SELECT 1' || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 30s
+    networks: [e2e]
+
+  # Job de uma execucao: cria OficinaMecanicaDb e BillingDb com um usuario contido por banco (db_owner so no proprio
+  # banco), o mesmo desenho do OficinaMecanica.Banco/sql/criar-usuarios.sql. As tabelas nascem das migrations de cada
+  # servico (aplicadas por ele mesmo na partida em Development, ver README).
+  sql-init:
+    image: mcr.microsoft.com/mssql/server:2022-CU27-ubuntu-22.04
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+    restart: "no"
+    environment:
+      E2E_SA_PASSWORD: "${E2E_SA_PASSWORD:-}"
+      E2E_OS_DB_PASSWORD: "${E2E_OS_DB_PASSWORD:-}"
+      E2E_BILLING_DB_PASSWORD: "${E2E_BILLING_DB_PASSWORD:-}"
+    volumes:
+      - ./sql/init.sql:/init/init.sql:ro
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - >-
+        /opt/mssql-tools18/bin/sqlcmd -S sqlserver -U sa -P "$$E2E_SA_PASSWORD" -C -b -i /init/init.sql
+        -v SenhaOs="$$E2E_OS_DB_PASSWORD" SenhaBilling="$$E2E_BILLING_DB_PASSWORD"
+    networks: [e2e]
+
+  mongo:
+    image: mongo:7.0.45
+    # Replica set de 1 no e obrigatorio: o outbox transacional do MassTransit.MongoDb usa transacoes. O membro se
+    # anuncia como mongo:27017, nome que a Execucao resolve pela rede do compose.
+    command: ["mongod", "--replSet", "rs0", "--bind_ip_all", "--port", "27017"]
+    ports:
+      - "127.0.0.1:${E2E_PORTA_MONGO:-27118}:27017"
+    volumes:
+      - mongo_data:/data/db
+    healthcheck:
+      # So fica saudavel quando o no virou PRIMARY (depois do mongo-init).
+      test: ["CMD-SHELL", "mongosh --quiet --eval \"db.hello().isWritablePrimary\" | grep -q true"]
+      interval: 5s
+      timeout: 10s
+      retries: 24
+      start_period: 10s
+    networks: [e2e]
+
+  mongo-init:
+    image: mongo:7.0.45
+    depends_on:
+      mongo:
+        condition: service_started
+    restart: "no"
+    entrypoint: ["/bin/bash", "-c"]
+    command:
+      - |
+        until mongosh --host mongo --quiet --eval "db.adminCommand('ping').ok" >/dev/null 2>&1; do sleep 1; done
+        mongosh --host mongo --quiet --eval "try { rs.status().ok } catch (e) { rs.initiate({_id: 'rs0', members: [{_id: 0, host: 'mongo:27017'}]}).ok }"
+    networks: [e2e]
+
+  rabbitmq:
+    image: rabbitmq:4.4.0-management
+    environment:
+      RABBITMQ_DEFAULT_USER: "${E2E_RABBIT_USER:-}"
+      RABBITMQ_DEFAULT_PASS: "${E2E_RABBIT_PASSWORD:-}"
+    ports:
+      - "127.0.0.1:${E2E_PORTA_AMQP:-56720}:5672"
+      - "127.0.0.1:${E2E_PORTA_RABBIT_UI:-15683}:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 10s
+      retries: 12
+      start_period: 30s
+    networks: [e2e]
+
+  mailpit:
+    image: axllent/mailpit:v1.31.0
+    ports:
+      - "127.0.0.1:${E2E_PORTA_MAILPIT_UI:-18025}:8025"
+      - "127.0.0.1:${E2E_PORTA_SMTP:-11025}:1025"
+    networks: [e2e]
+
+  # Substituto do OficinaMecanica.Seguranca: serve so o JWKS com a chave PUBLICA do par de DEV gerado em .gerado/.
+  # A emissao do token fica por conta de emitir-token.sh (ver a limitacao no README).
+  jwks:
+    image: python:3.12.16-alpine
+    command: ["python", "-m", "http.server", "80", "--directory", "/srv"]
+    volumes:
+      - ./.gerado/jwks:/srv/.well-known:ro
+    ports:
+      - "127.0.0.1:${E2E_PORTA_JWKS:-18090}:80"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1/.well-known/jwks.json', timeout=3)"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    networks: [e2e]
+
+  billing:
+    build:
+      context: ${E2E_CONTEXTO_BILLING:-../../OficinaMecanica.Billing}
+      dockerfile: Dockerfile
+    image: oficina-e2e/billing:local
+    depends_on:
+      sql-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      jwks:
+        condition: service_healthy
+    environment:
+      # Development porque o gateway Fake so existe nele (o Billing recusa Fake fora de Development); os valores de
+      # mensageria sao os de producao, escritos por extenso para o ambiente nao depender dos padroes.
+      ASPNETCORE_ENVIRONMENT: "Development"
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
+      ConnectionStrings__DefaultConnection: "Server=tcp:sqlserver,1433;Database=BillingDb;User Id=app_billing;Password=${E2E_BILLING_DB_PASSWORD:-};Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
+      JwtSettings__Issuer: "OficinaMecanica.Seguranca"
+      JwtSettings__Audience: "OficinaMecanica.Client"
+      JwtSettings__JwksUri: "http://jwks/.well-known/jwks.json"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "/"
+      RabbitMq__Username: "${E2E_RABBIT_USER:-}"
+      RabbitMq__Password: "${E2E_RABBIT_PASSWORD:-}"
+      Mensageria__Transporte: "RabbitMq"
+      Mensageria__Persistencia: "EntityFramework"
+      Pagamento__Provider: "Fake"
+      Fake__WebhookSecret: "${E2E_FAKE_WEBHOOK_SECRET:-}"
+      Otel__Endpoint: ""
+    ports:
+      - "127.0.0.1:${E2E_PORTA_BILLING:-18081}:8080"
+    healthcheck: *saude-dotnet
+    networks: [e2e]
+
+  execucao:
+    build:
+      context: ${E2E_CONTEXTO_EXECUCAO:-../../OficinaMecanica.Execucao}
+      dockerfile: Dockerfile
+    image: oficina-e2e/execucao:local
+    depends_on:
+      mongo:
+        condition: service_healthy
+      mongo-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      jwks:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
+      ConnectionStrings__MongoDb: "mongodb://mongo:27017/?replicaSet=rs0"
+      MongoDb__Database: "execucao"
+      JwtSettings__Issuer: "OficinaMecanica.Seguranca"
+      JwtSettings__Audience: "OficinaMecanica.Client"
+      JwtSettings__JwksUri: "http://jwks/.well-known/jwks.json"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "/"
+      RabbitMq__Username: "${E2E_RABBIT_USER:-}"
+      RabbitMq__Password: "${E2E_RABBIT_PASSWORD:-}"
+      Mensageria__Transporte: "RabbitMq"
+      Mensageria__Outbox: "MongoDb"
+      Otel__Endpoint: ""
+    ports:
+      - "127.0.0.1:${E2E_PORTA_EXECUCAO:-18082}:8080"
+    healthcheck: *saude-dotnet
+    networks: [e2e]
+
+  os:
+    build:
+      # O OS Service e o proprio checkout (este compose fica em e2e/, um nivel abaixo da raiz). Os padroes dos irmaos
+      # (../../OficinaMecanica.*) sao os do checkout principal; os scripts exportam E2E_CONTEXTO_* ja resolvidos e passam por cima.
+      context: ${E2E_CONTEXTO_OS:-..}
+      dockerfile: Dockerfile
+    image: oficina-e2e/os:local
+    depends_on:
+      sql-init:
+        condition: service_completed_successfully
+      rabbitmq:
+        condition: service_healthy
+      jwks:
+        condition: service_healthy
+      mailpit:
+        condition: service_started
+      # Os comandos da saga vao por Send para as filas do Billing e da Execucao: subo o OS por ultimo para elas ja
+      # existirem quando a primeira OS for aberta.
+      billing:
+        condition: service_healthy
+      execucao:
+        condition: service_healthy
+    environment:
+      ASPNETCORE_ENVIRONMENT: "Development"
+      DOTNET_SYSTEM_GLOBALIZATION_INVARIANT: "false"
+      ConnectionStrings__DefaultConnection: "Server=tcp:sqlserver,1433;Database=OficinaMecanicaDb;User Id=app_os;Password=${E2E_OS_DB_PASSWORD:-};Encrypt=True;TrustServerCertificate=True;Connection Timeout=30;"
+      JwtSettings__Issuer: "OficinaMecanica.Seguranca"
+      JwtSettings__Audience: "OficinaMecanica.Client"
+      JwtSettings__JwksUri: "http://jwks/.well-known/jwks.json"
+      Smtp__Host: "mailpit"
+      Smtp__Port: "1025"
+      Smtp__Remetente: "no-reply@oficinamecanica.local"
+      RabbitMq__Host: "rabbitmq"
+      RabbitMq__Port: "5672"
+      RabbitMq__VirtualHost: "/"
+      RabbitMq__Username: "${E2E_RABBIT_USER:-}"
+      RabbitMq__Password: "${E2E_RABBIT_PASSWORD:-}"
+      Mensageria__Transporte: "RabbitMq"
+      Mensageria__Persistencia: "EntityFramework"
+      # Prazos de negocio como em producao (72 h e 48 h); so o intervalo do sweeper cai de 30 s para 5 s para os
+      # cenarios de expiracao nao esperarem meio minuto. O vencimento em si e forcado no banco (ver README).
+      Saga__PrazoAprovacaoHoras: "72"
+      Saga__PrazoPagamentoHoras: "48"
+      Saga__SweeperIntervaloSegundos: "5"
+      Saga__SweeperLote: "50"
+      Saga__SweeperHabilitado: "true"
+      # Consulta sincrona do OS a Execucao (GET /api/ordens-de-servico/{id}/execucao) pela rede do compose; no AKS o valor e o
+      # Service da Execucao.
+      Execucao__BaseUrl: "http://execucao:8080"
+      Otel__Endpoint: ""
+    ports:
+      - "127.0.0.1:${E2E_PORTA_OS:-18080}:8080"
+    healthcheck: *saude-dotnet
+    networks: [e2e]
+
+networks:
+  e2e:
+    name: oficina-e2e-net
+
+volumes:
+  sqlserver_data:
+  mongo_data:
+  rabbitmq_data:

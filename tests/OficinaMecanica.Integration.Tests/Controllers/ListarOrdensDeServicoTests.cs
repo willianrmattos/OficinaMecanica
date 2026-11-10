@@ -5,6 +5,7 @@ using FluentAssertions;
 using Microsoft.Extensions.DependencyInjection;
 using OficinaMecanica.Domain.Entities;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Integration.Tests.Support;
 
 namespace OficinaMecanica.Integration.Tests.Controllers;
 
@@ -82,6 +83,103 @@ public class ListarOrdensDeServicoTests : IClassFixture<CustomWebApplicationFact
 
         // Dentro do mesmo status (Recebida), a mais antiga vem primeiro.
         indiceRecebidaAntiga.Should().BeLessThan(indiceRecebidaNova);
+    }
+
+    [Fact]
+    public async Task Listar_SemFiltroStatus_DeveSeguirAPrioridadeExplicitaIncluindoPagamentoECancelada()
+    {
+        var canceladaAntiga = new OrdemDeServicoBuilder().Cancelada();
+        var recusadaAntiga = new OrdemDeServicoBuilder().OrcamentoRecusado();
+        var canceladaNova = new OrdemDeServicoBuilder().Cancelada();
+        var recusadaNova = new OrdemDeServicoBuilder().OrcamentoRecusado();
+        var recebida = new OrdemDeServicoBuilder().Recebida();
+        var emDiagnostico = new OrdemDeServicoBuilder().EmDiagnostico();
+        var aguardandoAprovacao = new OrdemDeServicoBuilder().AguardandoAprovacao();
+        var aguardandoPagamento = new OrdemDeServicoBuilder().AguardandoPagamento();
+        var emExecucao = new OrdemDeServicoBuilder().EmExecucao();
+        var finalizada = new OrdemDeServicoBuilder().Finalizada();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.OrdensDeServico.AddRange(
+                canceladaAntiga, recusadaAntiga, canceladaNova, recusadaNova, recebida, emDiagnostico,
+                aguardandoAprovacao, aguardandoPagamento, emExecucao, finalizada);
+            await db.SaveChangesAsync();
+
+            db.Entry(canceladaAntiga).Property(nameof(OrdemDeServico.DataAbertura)).CurrentValue = DateTime.UtcNow.AddDays(-12);
+            db.Entry(recusadaAntiga).Property(nameof(OrdemDeServico.DataAbertura)).CurrentValue = DateTime.UtcNow.AddDays(-9);
+            db.Entry(canceladaNova).Property(nameof(OrdemDeServico.DataAbertura)).CurrentValue = DateTime.UtcNow.AddDays(-2);
+            db.Entry(recusadaNova).Property(nameof(OrdemDeServico.DataAbertura)).CurrentValue = DateTime.UtcNow.AddDays(-1);
+            await db.SaveChangesAsync();
+        }
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ObterTokenAsync());
+
+        var response = await _client.GetAsync("/api/ordens-de-servico?pagina=1&tamanhoPagina=50");
+        response.EnsureSuccessStatusCode();
+
+        var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var idsNaOrdemRetornada = json.RootElement.GetProperty("itens").EnumerateArray()
+            .Select(i => i.GetProperty("id").GetGuid())
+            .ToList();
+
+        var semeadas = new[]
+        {
+            emExecucao.Id, aguardandoPagamento.Id, aguardandoAprovacao.Id, emDiagnostico.Id, recebida.Id,
+            canceladaAntiga.Id, recusadaAntiga.Id, canceladaNova.Id, recusadaNova.Id
+        };
+
+        // Cancelada (valor 8 no enum) nao pode subir para o topo: a prioridade e explicita. OrcamentoRecusado e
+        // Cancelada empatam no fim, entao as quatro se intercalam pela data de abertura (mais antiga primeiro),
+        // sem uma das duas classes ficar sempre acima da outra.
+        idsNaOrdemRetornada.Where(semeadas.Contains).Should().Equal(semeadas);
+        idsNaOrdemRetornada.Should().NotContain(finalizada.Id);
+    }
+
+    [Fact]
+    public async Task Listar_HistoricoGravadoForaDeOrdem_DeveRetornarCadaOrdemComOHistoricoEmOrdemCronologica()
+    {
+        var inicio = new DateTime(2026, 3, 10, 12, 0, 0, DateTimeKind.Utc);
+        var emExecucao = new OrdemDeServicoBuilder().EmExecucao().ComHistoricoEmOrdemInversa(inicio);
+        var aguardandoAprovacao = new OrdemDeServicoBuilder().AguardandoAprovacao().ComHistoricoEmOrdemInversa(inicio, mesmaData: true);
+        await _factory.SemearAsync(emExecucao, aguardandoAprovacao);
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ObterTokenAsync());
+
+        var response = await _client.GetAsync("/api/ordens-de-servico?pagina=1&tamanhoPagina=50");
+        response.EnsureSuccessStatusCode();
+
+        var itens = JsonDocument.Parse(await response.Content.ReadAsStringAsync()).RootElement.GetProperty("itens").EnumerateArray().ToList();
+        List<string?> HistoricoDe(Guid id) => itens.Single(i => i.GetProperty("id").GetGuid() == id)
+            .GetProperty("historicoStatus").EnumerateArray().Select(h => h.GetProperty("status").GetString()).ToList();
+
+        HistoricoDe(emExecucao.Id).Should().Equal("Recebida", "EmDiagnostico", "AguardandoAprovacao", "AguardandoPagamento", "EmExecucao");
+        HistoricoDe(aguardandoAprovacao.Id).Should().Equal("Recebida", "EmDiagnostico", "AguardandoAprovacao");
+    }
+
+    [Fact]
+    public async Task Listar_ComFiltroStatusCancelada_DeveRetornarSoCanceladas()
+    {
+        var cancelada = new OrdemDeServicoBuilder().Cancelada();
+        var recebida = new OrdemDeServicoBuilder().Recebida();
+
+        using (var scope = _factory.Services.CreateScope())
+        {
+            var db = scope.ServiceProvider.GetRequiredService<AppDbContext>();
+            db.OrdensDeServico.AddRange(cancelada, recebida);
+            await db.SaveChangesAsync();
+        }
+
+        _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", await ObterTokenAsync());
+
+        var response = await _client.GetAsync("/api/ordens-de-servico?pagina=1&tamanhoPagina=50&filtroStatus=Cancelada");
+        response.EnsureSuccessStatusCode();
+
+        var json = JsonDocument.Parse(await response.Content.ReadAsStringAsync());
+        var itens = json.RootElement.GetProperty("itens").EnumerateArray().ToList();
+
+        itens.Select(i => i.GetProperty("id").GetGuid()).Should().Contain(cancelada.Id).And.NotContain(recebida.Id);
+        itens.Should().OnlyContain(i => i.GetProperty("status").GetString() == "Cancelada");
     }
 
     [Fact]

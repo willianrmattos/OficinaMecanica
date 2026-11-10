@@ -1,5 +1,8 @@
 using MediatR;
 using OficinaMecanica.Application.DTOs;
+using OficinaMecanica.Application.Interfaces;
+using OficinaMecanica.Contracts.Common;
+using OficinaMecanica.Contracts.Events;
 using OficinaMecanica.Domain.Entities;
 using OficinaMecanica.Domain.Exceptions;
 using OficinaMecanica.Domain.Interfaces;
@@ -13,7 +16,9 @@ public class CriarOrdemDeServicoCommandHandler : IRequestHandler<CriarOrdemDeSer
     private readonly IVeiculoRepository _veiculoRepository;
     private readonly IServicoRepository _servicoRepository;
     private readonly IPecaRepository _pecaRepository;
+    private readonly IIntegrationEventPublisher _publisher;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly TimeProvider _timeProvider;
 
     public CriarOrdemDeServicoCommandHandler(
         IOrdemDeServicoRepository ordemRepository,
@@ -21,14 +26,18 @@ public class CriarOrdemDeServicoCommandHandler : IRequestHandler<CriarOrdemDeSer
         IVeiculoRepository veiculoRepository,
         IServicoRepository servicoRepository,
         IPecaRepository pecaRepository,
-        IUnitOfWork unitOfWork)
+        IIntegrationEventPublisher publisher,
+        IUnitOfWork unitOfWork,
+        TimeProvider timeProvider)
     {
         _ordemRepository = ordemRepository;
         _clienteRepository = clienteRepository;
         _veiculoRepository = veiculoRepository;
         _servicoRepository = servicoRepository;
         _pecaRepository = pecaRepository;
+        _publisher = publisher;
         _unitOfWork = unitOfWork;
+        _timeProvider = timeProvider;
     }
 
     public async Task<OrdemDeServicoDto> Handle(CriarOrdemDeServicoCommand request, CancellationToken cancellationToken)
@@ -65,6 +74,8 @@ public class CriarOrdemDeServicoCommandHandler : IRequestHandler<CriarOrdemDeSer
                 if (!peca.Ativo)
                     throw new DomainException($"A peça '{peca.Nome}' está inativa.");
 
+                // So valida: o estoque so e reservado quando o cliente aprova o orcamento, senao uma
+                // OS parada em diagnostico seguraria a peca por dias.
                 if (peca.QuantidadeEstoque < itemPeca.Quantidade)
                     throw new DomainException($"Estoque insuficiente para a peça '{peca.Nome}'. Disponível: {peca.QuantidadeEstoque}.");
 
@@ -73,8 +84,32 @@ public class CriarOrdemDeServicoCommandHandler : IRequestHandler<CriarOrdemDeSer
         }
 
         await _ordemRepository.AdicionarAsync(ordem, cancellationToken);
+
+        // Publica antes do SaveChanges: o outbox so grava a mensagem junto com a OS, no mesmo commit.
+        await _publisher.PublishAsync(MontarMensagem(ordem, veiculo), cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
         return OrdemDeServicoMapper.ToDto(ordem, cliente.Nome, veiculo.Placa.Valor);
     }
+
+    // A mensagem e um retrato da OS no momento da abertura: Billing e Execucao nunca consultam o banco daqui.
+    private OrdemDeServicoAberta MontarMensagem(OrdemDeServico ordem, Veiculo veiculo) =>
+        new(
+            Guid.NewGuid(),
+            ordem.Id,
+            _timeProvider.GetUtcNow(),
+            ordem.Numero,
+            ordem.ClienteId,
+            ordem.VeiculoId,
+            veiculo.Placa.Valor,
+            veiculo.Marca,
+            veiculo.Modelo,
+            ordem.Observacoes,
+            ordem.ValorTotal,
+            ordem.ItensServico
+                .Select(i => new ItemDeServicoMensagem(i.ServicoId, i.NomeServico, i.PrecoUnitario, i.Quantidade))
+                .ToList(),
+            ordem.ItensPeca
+                .Select(i => new ItemDePecaMensagem(i.PecaId, i.NomePeca, i.PrecoUnitario, i.Quantidade))
+                .ToList());
 }

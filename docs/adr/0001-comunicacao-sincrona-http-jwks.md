@@ -1,7 +1,18 @@
 # ADR 0001: Comunicacao sincrona via HTTP/JWKS (sem mensageria)
 
 ## Status
-Aceito
+Parcialmente substituido pelo RFC 0005 e pelo ADR 0006. Continua valendo a decisao de validar o JWT
+buscando as chaves em `/.well-known/jwks.json` por HTTP sincrono; deixou de valer a ausencia de
+mensageria entre servicos.
+
+## Atualizacao
+O ecossistema passou a ter tres servicos de negocio (OS, Billing e Execucao) que se coordenam por
+RabbitMQ e MassTransit, com uma Saga orquestrada pelo OS Service (RFC 0005, ADR 0003 e ADR 0006):
+a comunicacao entre eles e assincrona, por comandos e eventos, e a limitacao "sem pub/sub entre
+processos" listada nas consequencias negativas deixou de existir. A busca de JWKS entre o OS Service
+e o `OficinaMecanica.Seguranca` segue sincrona por HTTP, como este ADR decidiu (o ADR 0006 mantem
+essa chamada na lista de comunicacao sincrona). O texto original abaixo foi preservado como registro
+do que se decidiu na epoca, quando so existiam dois servicos.
 
 ## Contexto
 O ecossistema hoje tem dois servicos independentes -

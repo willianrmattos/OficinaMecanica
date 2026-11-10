@@ -53,9 +53,12 @@ public class StatusOrdemAlteradoEventHandler : INotificationHandler<StatusOrdemA
         StatusOrdemDeServico.Recebida => "Recebida",
         StatusOrdemDeServico.EmDiagnostico => "Em diagnóstico",
         StatusOrdemDeServico.AguardandoAprovacao => "Aguardando aprovação do orçamento",
+        // O link sai num e-mail a parte, quando o servico de cobranca o gera: este aviso chega antes dele.
+        StatusOrdemDeServico.AguardandoPagamento => "Aguardando pagamento (o link de pagamento chegará em seguida)",
         StatusOrdemDeServico.EmExecucao => "Em execução",
         StatusOrdemDeServico.Finalizada => "Finalizada",
         StatusOrdemDeServico.Entregue => "Entregue",
+        StatusOrdemDeServico.Cancelada => "Cancelada",
         _ => status.ToString()
     };
 }

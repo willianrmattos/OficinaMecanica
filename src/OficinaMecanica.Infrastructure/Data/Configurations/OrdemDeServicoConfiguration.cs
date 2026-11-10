@@ -22,6 +22,14 @@ public class OrdemDeServicoConfiguration : IEntityTypeConfiguration<OrdemDeServi
         builder.Property(o => o.DataAbertura).IsRequired();
         builder.Property(o => o.Version).IsConcurrencyToken();
 
+        // O default false e o que mantem as OS anteriores a saga fora dela quando a coluna for adicionada.
+        builder.Property(o => o.ParticipaDaSaga).IsRequired().HasDefaultValue(false);
+        builder.Property(o => o.EstoqueReservado).IsRequired().HasDefaultValue(false);
+        builder.Property(o => o.PagamentoId);
+        builder.Property(o => o.LinkPagamento).HasMaxLength(OrdemDeServico.TamanhoMaximoDoLinkDePagamento);
+        builder.Property(o => o.PagamentoExpiraEm);
+        builder.Property(o => o.MotivoCancelamento).HasMaxLength(OrdemDeServico.TamanhoMaximoDoMotivo);
+
         builder.HasMany(o => o.ItensServico)
             .WithOne()
             .HasForeignKey(i => i.OrdemDeServicoId)
