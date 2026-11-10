@@ -266,7 +266,8 @@ jobs:
       # e acontece neste job porque o do build-and-test nao passou pelo scanner.
       # As exclusoes de cobertura sao as mesmas do gate de cobertura (CLAUDE.md): Migrations, Program.cs,
       # DependencyInjection* e as EF Configurations. As Migrations tambem saem da analise de codigo (sao geradas), assim
-      # como o script de carga em stress/ (k6), que nao e codigo do servico.
+      # como o script de carga em stress/ (k6) e o teste ponta a ponta local em e2e/ (Python e shell que sobem os tres
+      # servicos no Docker): nao sao codigo do servico, e os argumentos de linha de comando deles vem de quem roda.
       # sonar.qualitygate.wait=true faz o "end" esperar o Quality Gate e FALHAR o job se ele reprovar.
       - name: Analise SonarCloud (begin, build, end)
         env:
@@ -282,7 +283,7 @@ jobs:
             /d:sonar.host.url="$SONAR_HOST_URL" \
             /d:sonar.cs.opencover.reportsPaths="TestResults/**/coverage.opencover.xml" \
             /d:sonar.coverage.exclusions="**/Migrations/**,**/Program.cs,**/DependencyInjection*.cs,**/Data/Configurations/**" \
-            /d:sonar.exclusions="**/Migrations/**,stress/**" \
+            /d:sonar.exclusions="**/Migrations/**,stress/**,e2e/**" \
             /d:sonar.qualitygate.wait=true \
             /d:sonar.qualitygate.timeout=300
           dotnet build "$SOLUTION" --configuration Release --no-incremental

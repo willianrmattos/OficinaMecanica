@@ -998,7 +998,7 @@ dotnet tool install --global dotnet-sonarscanner
 dotnet sonarscanner begin /k:"oficina-mecanica" /n:"OficinaMecanica" /v:"1.1.0" `
   /d:sonar.host.url="http://localhost:9000" /d:sonar.token="SEU_TOKEN" `
   /d:sonar.cs.opencover.reportsPaths="TestResults/**/coverage.opencover.xml" `
-  /d:sonar.exclusions="stress/**"
+  /d:sonar.exclusions="stress/**,e2e/**"
 dotnet build --no-incremental -c Release
 bash scripts/cobertura.sh testes-sem-infra
 dotnet sonarscanner end /d:sonar.token="SEU_TOKEN"
