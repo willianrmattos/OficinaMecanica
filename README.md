@@ -17,17 +17,11 @@ para o OS Service de uma arquitetura de microsservicos com Saga orquestrada
 Ele **so valida** tokens JWT (RS256, via JWKS); quem emite o token e o
 `OficinaMecanica.Seguranca`.
 
-> **Estado de publicacao: nada desta versao foi publicado.** O repositorio ja existe
-> no GitHub (remoto `origin`, com `main` e `release` na versao anterior, monolitica),
-> mas a branch `feature/microsservicos` so existe localmente (sem push), o workflow
-> `.github/workflows/ci.yml` novo nunca rodou no GitHub Actions, nenhuma imagem desta
-> versao foi enviada ao registry, nada foi implantado no cluster e o Terraform que cria
-> o RabbitMQ, as rotas e os segredos dos novos servicos (repositorios
-> `OficinaMecanica.Infra` e `OficinaMecanica.Banco`) nao foi aplicado. Tudo o que esta
-> descrito aqui como "validado" foi executado **localmente**; o que depende da
-> publicacao esta marcado como **ainda nao executado** (resumo na
-> [secao 1](#1-visao-geral) e roteiro completo na
-> [secao 16](#16-publicacao-ainda-nao-executada)).
+> **Estado de publicacao: publicado em 2026-11-09/10.** Os PRs do OS Service (#7 a #10) foram mergeados em `release` e em `main`, os
+> pipelines de `main` ficaram verdes (`Build & Test`, `Quality`, `Scan Image`, `Build & Push` e `Deploy to AKS`) e o servico roda no AKS (2
+> replicas), junto do Billing, da Execucao e do RabbitMQ (namespace `messaging`), atras do APIM (rotas `oficinaserver`, `billingserver`,
+> `execucaoserver` e `segurancaserver`). O que foi validado na nuvem e o que continua pendente esta na [secao 1](#1-visao-geral) e o
+> registro da publicacao na [secao 16](#16-publicacao-executada).
 
 Os links `../OficinaMecanica.*` deste documento apontam para os repositorios irmaos e
 **so funcionam com todos clonados lado a lado**, na mesma pasta pai; em um repositorio
@@ -50,7 +44,7 @@ publicado isoladamente eles nao resolvem.
 13. [Teste ponta a ponta dos tres servicos](#13-teste-ponta-a-ponta-dos-tres-servicos)
 14. [Decisoes, diagramas e relatorios](#14-decisoes-diagramas-e-relatorios)
 15. [Limitacoes conhecidas e pendencias](#15-limitacoes-conhecidas-e-pendencias)
-16. [Publicacao (ainda nao executada)](#16-publicacao-ainda-nao-executada)
+16. [Publicacao (executada)](#16-publicacao-executada)
 
 ---
 
@@ -72,18 +66,18 @@ publicado isoladamente eles nao resolvem.
 - **Consulta a Execucao** (so leitura) para mostrar o andamento do reparo, com
   degradacao definida quando ela esta fora (secao [6](#6-comunicacao-sincrona-x-assincrona)).
 
-### O que roda hoje e o que depende da publicacao
+### O que foi validado e o que continua pendente
 
-| Ja executado nesta maquina | Ainda nao executado (depende da publicacao) |
-|----------------------------|---------------------------------------------|
-| Build Release e **1147 testes** passando, inclusive os de infraestrutura com SQL Server e RabbitMQ reais em containers; cobertura de linhas de 96,71% (bruta) e 95,85% (com exclusoes), ver [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md) | Qualquer execucao do workflow `.github/workflows/ci.yml` no GitHub Actions (a ordem dos jobs e as condicoes `if` so se provam na primeira execucao) |
-| 12 cenarios BDD (Behavior-Driven Development) da Saga, com a API e a maquina de estados reais e Billing/Execucao simulados | SonarCloud (analise e Quality Gate) |
-| `bash scripts/ci-local.sh`: os mesmos passos do job `Build & Test`, completo e verde em 2026-11-08 | Scan Trivy da imagem no pipeline, push no ACR (Azure Container Registry) e deploy no AKS (Azure Kubernetes Service) |
-| Validacao estatica do workflow (`actionlint`), do shell (`shellcheck`) e dos manifests (`kubeconform`); `docker build` da imagem; imagem executada como usuario nao-root, com raiz somente leitura, contra SQL Server e RabbitMQ reais | Migrations aplicadas no `OficinaMecanicaDb` real (Azure SQL) e manifests aplicados em um cluster |
-| Scripts de CI testados com entradas sinteticas e mutantes (`scripts/testar-scripts.sh`: 76 casos e 38 mutantes detectados) | RabbitMQ no cluster, rotas `billingserver`/`execucaoserver` na APIM, segredos dos novos servicos no Key Vault e usuarios SQL dedicados (todos criados pelos repositorios `OficinaMecanica.Infra` e `OficinaMecanica.Banco`, que nao foram aplicados) |
-| Migrations validadas em SQL Server real, a partir da `Initial` | Atualizacao do ruleset de protecao de branch no GitHub (hoje exige so o `Build & Test`; o JSON versionado acrescenta o `Quality`; comando na [secao de protecao de branch](#protecao-de-branch-ruleset-versionado)) |
-| Stack local com `docker compose` (API, SQL Server, RabbitMQ, Mailpit, observabilidade), com a fila da saga criada na partida | A Saga rodando contra o Billing e a Execucao reais no cluster; Azure SQL serverless acordando durante a Saga |
-| Teste ponta a ponta local dos tres servicos em ambiente Docker isolado: 7 cenarios e as verificacoes finais passaram em 2026-11-08 (8 de 8, 586 asserts; [secao 13](#13-teste-ponta-a-ponta-dos-tres-servicos)) | Integracao real com o Mercado Pago (responsabilidade do Billing, nunca exercitada com credenciais reais) |
+| Validado localmente | Validado na nuvem (publicado em 2026-11-09/10) ou pendente |
+|---------------------|------------------------------------------------------------|
+| Build Release e **1147 testes** passando, inclusive os de infraestrutura com SQL Server e RabbitMQ reais em containers; cobertura de linhas de 96,71% (bruta) e 95,85% (com exclusoes), ver [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md) | O workflow `.github/workflows/ci.yml` roda no GitHub Actions desde 2026-11-09: `Build & Test` e `Quality` em todo PR; `Scan Image`, `Build & Push` e `Deploy to AKS` em `release` e `main`, todos verdes em `main` (a ordem dos jobs e as condicoes `if` ficaram provadas na pratica) |
+| 12 cenarios BDD (Behavior-Driven Development) da Saga, com a API e a maquina de estados reais e Billing/Execucao simulados | SonarCloud (analise e Quality Gate) roda no job `Quality`; a primeira analise da `main` de um projeto novo devolve gate `NONE` e o job falha, um re-run resolve |
+| `bash scripts/ci-local.sh`: os mesmos passos do job `Build & Test`, completo e verde em 2026-11-08 | Scan Trivy da imagem no pipeline (`trivy-action` v0.36.0), push no ACR (Azure Container Registry) e deploy no AKS (Azure Kubernetes Service), executados |
+| Validacao estatica do workflow (`actionlint`), do shell (`shellcheck`) e dos manifests (`kubeconform`); `docker build` da imagem; imagem executada como usuario nao-root, com raiz somente leitura, contra SQL Server e RabbitMQ reais | Migrations aplicadas no `OficinaMecanicaDb` real (Azure SQL) e manifests aplicados no cluster, executados no deploy |
+| Scripts de CI testados com entradas sinteticas e mutantes (`scripts/testar-scripts.sh`: 76 casos e 38 mutantes detectados, medido de novo em 2026-11-10) | RabbitMQ 4.4.0 no cluster, rotas `billingserver`/`execucaoserver` no APIM, segredos dos novos servicos no Key Vault e usuarios SQL dedicados, criados pelos repositorios `OficinaMecanica.Infra` e `OficinaMecanica.Banco` (aplicados) |
+| Migrations validadas em SQL Server real, a partir da `Initial` | **Pendente:** atualizar o ruleset de protecao de branch no GitHub (hoje exige so o `Build & Test`; o JSON versionado acrescenta o `Quality`; comando na [secao de protecao de branch](#protecao-de-branch-ruleset-versionado)) |
+| Stack local com `docker compose` (API, SQL Server, RabbitMQ, Mailpit, observabilidade), com a fila da saga criada na partida | A Saga rodando contra o Billing e a Execucao reais no cluster, pelo APIM (2026-11-10): o cenario feliz (OS-20261110-95B066, estoque 10 para 8) e a recusa do orcamento passaram. **Nao exercitados na nuvem:** estorno por reparo inviavel e cancelamento pelo staff |
+| Teste ponta a ponta local dos tres servicos em ambiente Docker isolado: em 2026-11-10, sobre o codigo publicado, os 7 cenarios passaram (532 asserts) e as verificacoes finais passaram 54 de 54 na reexecucao, depois de reprovarem 1 de 54 na primeira passada (checagem de fila sem espera, corrigida; [evidencia](e2e/evidencias/2026-11-10-execucao-publicada.md)); a rodada de 2026-11-08 foi 8 de 8, 586 asserts ([secao 13](#13-teste-ponta-a-ponta-dos-tres-servicos)) | Integracao real com o Mercado Pago (responsabilidade do Billing): pagamento de teste feito no checkout do Mercado Pago com o comprador de teste (2026-11-10). A prova do webhook `payment` e indireta: so o tratador do webhook consulta o pagamento por id, e a consulta, a atualizacao e o evento `PagamentoAprovado` aparecem em sequencia; o span de entrada do `POST` nao aparece no New Relic |
 
 ### Termos usados neste documento
 
@@ -965,8 +959,9 @@ em copias dos scripts e exige que cada um seja detectado.
 - Exclusoes documentadas (as mesmas no `cobertura.sh`, no Sonar e aqui): `Migrations`, `Program.cs`,
   `DependencyInjection*` e as EF Configurations. `[ExcludeFromCodeCoverage]` e proibido sem ADR (hoje: 0
   ocorrencias em `src/`).
-- **SonarCloud** como quality gate bloqueante no job `Quality` (**ainda nao executado**: depende da
-  publicacao).
+- **SonarCloud** como quality gate bloqueante no job `Quality`, em execucao desde 2026-11-09
+  (`sonar.qualitygate.wait=true`: o job falha se o gate reprovar). O `e2e/` e o `stress/` ficam fora da analise
+  (`sonar.exclusions` no `ci.yml`).
 
 ### Comandos
 
@@ -1094,7 +1089,7 @@ retry reprocessar a mensagem, a transicao e contada de novo (vale para `saga_con
 `saga_orcamento_recusado`, `saga_estorno_pendente_manual`, `saga_prazo_expirado`, o histograma,
 `saga_decisao_ignorada` e `saga_compensacao_falhou`). Nunca fica a menor. Por isso **alerte por taxa ou limiar,
 nunca por contagem exata**, e trate os gauges `saga_por_estado` e `saga_compensacao_presa` (que leem o banco) como a
-fonte autoritativa. As consultas NRQL de dashboard e de alerta **ainda nao foram criadas** para estas metricas.
+fonte autoritativa. Os dashboards (um por servico) e a politica de alertas `OficinaMecanica` (5xx por servico, saga, pagamento, fila da Execucao, outbox e pods) foram criados no New Relic em 2026-11-10; a definicao deles fica fora deste repositorio.
 
 ### AKS: OpenTelemetry Collector e New Relic
 
@@ -1483,7 +1478,7 @@ sao fotos historicas, anteriores a esta versao.
 
 ## 15. Limitacoes conhecidas e pendencias
 
-Registradas com honestidade; nenhuma esta marcada como **bloqueante** hoje, e as que vierem a ser marcadas precisam ser resolvidas antes da publicacao.
+Registradas com honestidade; nenhuma esta marcada como **bloqueante** hoje, e as que vierem a ser marcadas precisam ser resolvidas antes do proximo deploy.
 
 **Pipeline e publicacao**
 
@@ -1491,20 +1486,20 @@ Registradas com honestidade; nenhuma esta marcada como **bloqueante** hoje, e as
   `aquasecurity/trivy-action`, `dorny/test-reporter`) usam `uses: <action>@<sha completo> # <versao>`. O SHA veio da tag que o workflow usava, resolvida no dia; o conteudo
   daquele commit nao foi auditado: o pin impede que a tag seja movida depois, mas nao prova que o commit de hoje e confiavel. O Dependabot de `github-actions`
   propoe as atualizacoes mantendo o formato `@sha # versao`. O Trivy estava referenciado como `0.28.0`, tag que nao existe no repositorio da action; o pin aponta hoje para a `v0.36.0`: a `v0.28.0` chama internamente `setup-trivy@v0.2.1`, tag que deixou de existir, e a `v0.36.0` fixa as actions internas por SHA.
-- **O workflow novo nunca rodou no GitHub.** A ordem dos jobs e as condicoes `if` so se provam na primeira execucao real; so a separacao de privilegios
-  e o valor do gate (`COBERTURA_MINIMA: "80"`) tem teste automatico.
-- **Pacotes NuGet transitivos vulneraveis, pre-existentes**: `dotnet list package --vulnerable --include-transitive` (executado em 2026-11-08, so consulta)
-  aponta em `OficinaMecanica.API` e `OficinaMecanica.Infrastructure` `Microsoft.IdentityModel.JsonWebTokens` e `System.IdentityModel.Tokens.Jwt` 7.0.3
-  (severidade moderada) e `System.Security.Cryptography.Pkcs` 8.0.1 (alta e moderada); nos projetos de teste, `System.Net.Http` 4.3.0 e
-  `System.Text.RegularExpressions` 4.3.0 (altas, so de teste). O `docs/relatorios/trivy-report.md` (anterior a Saga) ja listava pacotes NuGet com correcao disponivel;
-  `Azure.Identity` e `Microsoft.Data.SqlClient`, que aquele relatorio apontava, hoje resolvem para 1.12.1 e 5.1.9 (acima das versoes com correcao que ele citava). O scan Trivy
-  da imagem **nao foi reexecutado** nesta versao: se houver correcao publicada para algum achado `HIGH`, o job `scan-image` reprova e bloqueia o push da
-  imagem. Tratar antes do primeiro push (ver a [secao 16](#16-publicacao-ainda-nao-executada)).
+- **O workflow roda no GitHub desde 2026-11-09** (PRs #7 a #10): a ordem dos jobs e as condicoes `if` foram provadas na pratica; a separacao de
+  privilegios e o valor do gate (`COBERTURA_MINIMA: "80"`) continuam com teste automatico. A primeira analise da `main` de um projeto novo no SonarCloud
+  devolve gate `NONE` e o job `Quality` falha: um re-run resolve. Os testes que usam o harness do MassTransit definem `TestTimeout` e
+  `TestInactivityTimeout` (o tempo de inatividade padrao e curto e um teste instavel apareceu no `Build & Test` do `release`).
+- **Pacotes NuGet transitivos vulneraveis: corrigidos em 2026-11-10 com versoes fixadas.** `dotnet list package --vulnerable --include-transitive` (consulta ao
+  NuGet) apontava `Microsoft.IdentityModel.JsonWebTokens` e `System.IdentityModel.Tokens.Jwt` 7.0.3 (moderada, GHSA-59j7-ghrg-fj52; o JwtBearer 8.0.0 os arrasta) em
+  `OficinaMecanica.API` e `OficinaMecanica.Infrastructure`, e `System.Net.Http` 4.3.0 e `System.Text.RegularExpressions` 4.3.0 (altas; dependencias do xunit 2.4.2 via
+  NETStandard.Library 1.6.1) nos projetos de teste. O `OficinaMecanica.Infrastructure` fixa o IdentityModel em 7.7.1 e os projetos de teste fixam `System.Net.Http` 4.3.4 e
+  `System.Text.RegularExpressions` 4.3.1; o `System.Security.Cryptography.Pkcs` 8.0.2 ja estava fixado. A mesma consulta nao acusa mais nenhum pacote em nenhum projeto. O scan Trivy
+  da imagem roda no job `Scan Image` (so em push para `release`/`main`) e reprova `HIGH` com correcao publicada.
 - **`Quality` pulado em PR de fork** conta como satisfeito para o GitHub: PR de fork nao passa pelo Sonar e depende de revisao.
 - O runner do GitHub precisa alcancar o Azure SQL (regra de firewall do servidor), a mesma premissa do pipeline anterior.
-- O ruleset `protect-main-release` ja existe e esta ativo no GitHub (conferido so em leitura em 2026-11-09), exigindo apenas `Build & Test`; o JSON versionado
-  acrescenta o `Quality`. Atualizar so depois de o SonarCloud estar configurado e de o job `Quality` ter rodado ao menos uma vez, senao todo PR fica
-  bloqueado (ver [Protecao de branch](#protecao-de-branch-ruleset-versionado)).
+- O ruleset `protect-main-release` esta ativo no GitHub exigindo apenas `Build & Test`; o JSON versionado acrescenta o `Quality`. O job `Quality` ja rodou (a condicao para
+  exigi-lo esta cumprida), entao falta so aplicar o `PUT` (ver [Protecao de branch](#protecao-de-branch-ruleset-versionado)); depende de autorizacao.
 - O job `deploy-to-aks` falha se o cluster estiver parado (`az aks stop`).
 
 **Rede e exposicao (APIM)**
@@ -1557,62 +1552,54 @@ Registradas com honestidade; nenhuma esta marcada como **bloqueante** hoje, e as
 
 ---
 
-## 16. Publicacao (ainda nao executada)
+## 16. Publicacao (executada)
 
-> **Nada desta secao foi executado.** E o roteiro para quando houver autorizacao e credenciais. Os nomes de variaveis, segredos e recursos vem dos arquivos deste
-> repositorio e dos READMEs dos repositorios [OficinaMecanica.Infra](../OficinaMecanica.Infra) e [OficinaMecanica.Banco](../OficinaMecanica.Banco). A ordem e as
-> ressalvas sao as mesmas dos READMEs do [Billing](../OficinaMecanica.Billing/README.md) e da [Execucao](../OficinaMecanica.Execucao/README.md), com uma diferenca: **este
-> repositorio ja existe no GitHub** (remoto `origin`, com `main` e `release` na versao monolitica anterior). As demais branches e PRs vao para `release` e o responsavel
-> pelo repositorio faz o merge de `release` em `main`.
+Registro do que foi feito para publicar esta versao em 2026-11-09/10 e do que continua pendente. Os nomes de variaveis, segredos e recursos vem dos arquivos deste
+repositorio e dos READMEs dos repositorios [OficinaMecanica.Infra](../OficinaMecanica.Infra) e [OficinaMecanica.Banco](../OficinaMecanica.Banco). A ordem e as
+ressalvas sao as mesmas dos READMEs do [Billing](../OficinaMecanica.Billing/README.md) e da [Execucao](../OficinaMecanica.Execucao/README.md). Este repositorio ja existia no
+GitHub (com `main` e `release` na versao monolitica anterior); os PRs vao para `release` e o responsavel pelo repositorio faz o merge de `release` em `main`.
 
-### Pre-requisitos
+### Pre-requisitos (cumpridos)
 
 - **Plataforma do ecossistema** provisionada pelos repositorios `OficinaMecanica.Infra` e `OficinaMecanica.Banco` (AKS `aksfiap`, ACR `acrfiap`, Key Vault `kvfiap`, APIM
-  `apimfiap`, servidor SQL `svsfiap`). O que este servico precisa dos novos Terraform: o RabbitMQ no namespace `messaging`, os segredos `rabbitmq-username` e
-  `rabbitmq-password` no Key Vault e o usuario SQL dedicado do `OficinaMecanicaDb`. Nenhum foi aplicado. **Ordem: Banco antes do Infra, Infra antes do deploy dos
-  servicos** (aplicar o Infra antes de o usuario dedicado existir troca a connection string por um login inexistente). Depois da troca da connection string, reiniciar
-  quem a le do Key Vault (`kubectl rollout restart` do Deployment). O bootstrap do Banco esta na secao "Ordem de aplicacao e bootstrap" do `CLAUDE.md` do
-  `OficinaMecanica.Banco`.
+  `apimfiap`, servidor SQL `svsfiap`), incluindo o que este servico precisa dos novos Terraform: o RabbitMQ no namespace `messaging`, os segredos `rabbitmq-username` e
+  `rabbitmq-password` no Key Vault e o usuario SQL dedicado do `OficinaMecanicaDb`. **Ordem: Banco antes do Infra, Infra antes do deploy dos servicos** (aplicar o Infra antes
+  de o usuario dedicado existir troca a connection string por um login inexistente). Depois da troca da connection string, reiniciar quem a le do Key Vault
+  (`kubectl rollout restart` do Deployment). O bootstrap do Banco esta na secao "Ordem de aplicacao e bootstrap" do `CLAUDE.md` do `OficinaMecanica.Banco`.
 - **Os tres servicos fecham o fluxo juntos**: sem o Billing e a Execucao publicados e o RabbitMQ no cluster, a Saga desta OS nao anda alem do primeiro comando.
-  Os servicos novos exigem **criar os repositorios no GitHub** e preencher `billing_github_repo_id` e `execucao_github_repo_id` no Infra (ver os READMEs deles).
-- **SonarCloud**: organizacao e projeto para este repositorio, um token (`SONAR_TOKEN`) e os valores para as variaveis `SONAR_PROJECT_KEY` e `SONAR_ORGANIZATION`
-  (o pipeline anterior nao tinha o job `Quality`).
-- **OIDC (Azure)**: as variaveis do repositorio `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` e `AZURE_SUBSCRIPTION_ID`. Este repositorio ja tem identidade OIDC no Terraform do Infra
-  (modulo `github_oidc`); **conferir** que as variaveis existem no GitHub.
+- **SonarCloud**: organizacao e projeto para este repositorio, `SONAR_TOKEN` (secret) e as variaveis `SONAR_PROJECT_KEY` e `SONAR_ORGANIZATION`.
+- **OIDC (Azure)**: as variaveis do repositorio `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` e `AZURE_SUBSCRIPTION_ID` (identidade no modulo `github_oidc` do Infra).
 - **Ferramentas**: `git`, GitHub CLI (`gh`) autenticada com permissao de administracao no repositorio, e bash.
 
 ### Passos, na ordem
 
-Todos **ainda nao executados**, exceto o passo 1.
-
-1. [x] **Actions fixadas por SHA completo** em `.github/workflows/ci.yml`, com a versao num comentario ao lado (feito em 2026-11-09; ver a
-   [secao 15](#15-limitacoes-conhecidas-e-pendencias)). O Dependabot mantem os SHAs.
-2. [ ] **Rodar o scan Trivy da imagem localmente** (`docker compose build api` e `docker compose run --rm trivy`) e tratar os achados `HIGH`/`CRITICAL` com correcao
-   disponivel, em especial os pacotes NuGet transitivos listados nas limitacoes: o job `scan-image` os reprova antes do push.
-3. [ ] **Criar os repositorios do Billing e da Execucao** no GitHub (`willianrmattos/OficinaMecanica.Billing` e `willianrmattos/OficinaMecanica.Execucao`, ainda vazios,
-   **sem empurrar nada**) e obter os ids com `gh api repos/<dono>/<repo> --jq .id`.
-4. [ ] **Aplicar o Banco e depois o Infra**, nessa ordem. O primeiro apply do Banco e **local**, com um administrador humano. No Infra, gravar os ids no `default` de
-   `billing_github_repo_id` e `execucao_github_repo_id` em `variables.tf` **via PR** (o CI do Infra nao le `.tfvars`) e aplicar: isso cria RabbitMQ, rotas
-   `billingserver`/`execucaoserver`, identidades OIDC e segredos. Confirmar antes os GitHub Secrets do Infra (`TF_VAR_SQL_APP_OS_PASSWORD`, `TF_VAR_SQL_APP_BILLING_PASSWORD`,
-   `TF_VAR_MERCADOPAGO_*`...). O merge de um PR do Infra em `release`/`main` dispara o `terraform apply` automaticamente.
-5. [ ] **Configurar este repositorio** (Settings > Secrets and variables > Actions): `AZURE_CLIENT_ID`, `AZURE_TENANT_ID` e `AZURE_SUBSCRIPTION_ID` (variaveis; conferir),
-   `SONAR_PROJECT_KEY` e `SONAR_ORGANIZATION` (variaveis) e `SONAR_TOKEN` (secret; criar **tambem** em Settings > Secrets > Dependabot, porque os PRs do Dependabot nao
-   enxergam os secrets de Actions). `gh variable set` e `gh secret set` fazem o mesmo pela linha de comando.
-6. [ ] **Enviar a branch e abrir o primeiro PR para `release`.** Empurrar `feature/microsservicos` para o `origin` e abrir o PR **para `release`**: o `CI` roda pela primeira vez
-   (`Build & Test` e `Quality`; PR nao toca o Azure nem publica imagem). A `release` do `origin` (no ultimo fetch local) guarda a versao monolitica anterior, e a branch ja inclui o merge dela.
-7. [ ] **Atualizar o ruleset `protect-main-release`**, **so depois** de o SonarCloud estar configurado (passo 5) e de o job `Quality` ter rodado ao menos uma vez
-   (passo 6; o GitHub so oferece como obrigatorio um check que ja apareceu, e sem isso todo PR fica bloqueado esperando um check que nao existe ou falha). O ruleset
-   **ja existe e esta ativo** no GitHub exigindo so o `Build & Test`, entao o comando e de atualizacao (`PUT`), com o JSON versionado como entrada:
+1. [x] **Actions fixadas por SHA completo** em `.github/workflows/ci.yml`, com a versao num comentario ao lado (2026-11-09; ver a
+   [secao 15](#15-limitacoes-conhecidas-e-pendencias)). O Dependabot mantem os SHAs. As actions internas de uma action fixada por SHA precisam continuar resolviveis: o
+   `trivy-action` v0.28.0 chamava uma tag que deixou de existir, e o pin atual e a v0.36.0.
+2. [x] **Scan Trivy da imagem**: roda no job `Scan Image` (so em push para `release`/`main`) e reprova `HIGH`/`CRITICAL` com correcao publicada antes do push no ACR.
+3. [x] **Repositorios do Billing e da Execucao** criados no GitHub.
+4. [x] **Banco e depois Infra aplicados**, nessa ordem (PRs #7 a #9 do Banco e #10 a #12 do Infra). O primeiro apply do Banco foi **local**, com um administrador humano; o merge
+   de um PR do Infra em `release`/`main` dispara o `terraform apply`. Isso criou o RabbitMQ, as rotas `billingserver`/`execucaoserver`, as identidades OIDC e os segredos.
+5. [x] **Este repositorio configurado** (Settings > Secrets and variables > Actions): `AZURE_*` e `SONAR_PROJECT_KEY`/`SONAR_ORGANIZATION` (variaveis) e `SONAR_TOKEN` (secret; criado
+   **tambem** em Settings > Secrets > Dependabot, porque os PRs do Dependabot nao enxergam os secrets de Actions).
+6. [x] **PRs para `release`** (#7 a #10): o `CI` rodou com `Build & Test` e `Quality`; PR nao toca o Azure nem publica imagem.
+7. [ ] **Pendente: atualizar o ruleset `protect-main-release`.** O job `Quality` ja rodou (o GitHub so oferece como obrigatorio um check que ja apareceu). O ruleset **ja existe e
+   esta ativo** exigindo so o `Build & Test`, entao o comando e de atualizacao (`PUT`), com o JSON versionado como entrada (depende de autorizacao):
 
    ```bash
    gh api --method PUT repos/willianrmattos/OficinaMecanica/rulesets/$(gh api repos/willianrmattos/OficinaMecanica/rulesets --jq '.[] | select(.name == "protect-main-release") | .id') --input .github/rulesets/protect-main-release.json
    ```
-8. [ ] **Antes do primeiro deploy**, conferir: a folga de CPU do no (`kubectl describe node`); o RabbitMQ no namespace `messaging` e os tres segredos no Key Vault; o Service
-   `oficinamecanica-execucao` (Execucao) no mesmo namespace; e que as migrations `AdicionaPagamentoEMensageria` e `AdicionaSagaEPrazos` sao compativeis com o banco atual
-   (as OS ja existentes ficam fora da saga e respondem 409 em aprovar, recusar e cancelar).
-9. [ ] **Merge do PR em `release`.** O `push` em `release` dispara `Scan Image`, `Build & Push` e `Deploy to AKS` **pela primeira vez**: imagem no ACR, migrations no banco real e
-   rollout no **mesmo Deployment de producao** (homologacao e producao compartilham o cluster). Verificar o rollout, `/health/ready` e a fila `os-saga` no RabbitMQ.
-10. [ ] **PR de `release` para `main`** (o merge e feito pelo responsavel pelo repositorio). O `push` em `main` repete o pipeline de publicacao e tambem grava a tag `latest`.
-11. [ ] **Pos-publicacao** (fora deste repositorio): preencher o badge e o link do SonarCloud em [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md); conferir, logo apos o apply do Infra, que a
-    policy da APIM que devolve 404 para `/health/ready` e `/metrics` na rota publica esta ativa (chamar `/oficinaserver/health/ready`); confirmar a premissa de path da APIM chamando `/oficinaserver/health`; criar o dashboard e os alertas das metricas da saga;
-    executar uma OS de ponta a ponta no cluster, com os tres servicos, e atualizar a tabela de estado da [secao 1](#1-visao-geral).
+8. [x] **Conferencias antes do primeiro deploy**: o RabbitMQ no namespace `messaging` e os segredos no Key Vault; o Service `oficinamecanica-execucao` (Execucao) no mesmo
+   namespace; migrations `AdicionaPagamentoEMensageria` e `AdicionaSagaEPrazos` compativeis com o banco atual (as OS ja existentes ficam fora da saga e respondem 409 em
+   aprovar, recusar e cancelar).
+9. [x] **Merge do PR em `release`**: o `push` disparou `Scan Image`, `Build & Push` e `Deploy to AKS`: imagem no ACR, migrations no banco real e rollout no **mesmo Deployment de
+   producao** (homologacao e producao compartilham o cluster).
+10. [x] **PR de `release` para `main`**, mergeado pelo responsavel pelo repositorio; o `push` em `main` repetiu o pipeline de publicacao e gravou a tag `latest`.
+11. **Pos-publicacao:**
+    - [x] A premissa de path do APIM foi confirmada: `/oficinaserver/health` e as rotas equivalentes de `billingserver` e `execucaoserver` respondem 200 pelo APIM.
+    - [ ] **Pendente: a policy da APIM que devolve 404 para `/health/ready` e `/metrics` na rota publica nao esta efetiva.** Em 2026-11-10, `/oficinaserver/health/ready`
+      e `/oficinaserver/metrics` (e os equivalentes dos outros servicos) responderam 200 pelo APIM. Conferir o apply do Infra (ADR 0007 do Infra).
+    - [x] Dashboards e alertas das metricas da saga criados no New Relic (2026-11-10).
+    - [x] Uma OS de ponta a ponta no cluster, com os tres servicos, pelo APIM e com o gateway real do Mercado Pago de teste (2026-11-10): cenario feliz e recusa. Estorno e
+      cancelamento pelo staff ainda nao foram exercitados na nuvem.
+    - [ ] **Pendente:** preencher o badge e o link do SonarCloud em [docs/relatorios/cobertura.md](docs/relatorios/cobertura.md).

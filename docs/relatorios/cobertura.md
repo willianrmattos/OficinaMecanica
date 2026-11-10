@@ -14,9 +14,9 @@ arquivos `.trx` de cada projeto de teste.
 | Resultado dos testes | 1147 executados, 1147 aprovados, 0 falhas |
 | Gate do CI | cobertura de linhas **>= 80%** sobre o numero "com exclusoes" |
 
-> Esta medicao foi feita **localmente**. O CI no GitHub Actions ainda nao rodou com esta
-> versao (nada foi publicado); a evidencia equivalente do CI so existe depois da primeira
-> execucao (ver [Onde fica no CI](#onde-fica-no-ci)).
+> Esta medicao foi feita **localmente**, em 2026-11-08. O CI no GitHub Actions roda desde
+> 2026-11-09 e publica a cobertura como artefato e no Job Summary de cada run (ver
+> [Onde fica no CI](#onde-fica-no-ci)); os numeros desta pagina nao foram refeitos.
 
 ## Resumo
 
@@ -152,10 +152,10 @@ artefatos do job:
 - **`resultados-dos-testes`**: os `.trx`;
 - o **Job Summary** do run, com a tabela de cobertura e as ocorrencias de `[ExcludeFromCodeCoverage]`.
 
-**Ainda nao executado no GitHub**: nenhum desses artefatos existe ate a primeira execucao do pipeline.
+Esses artefatos existem em cada run do workflow no GitHub Actions (os de `Build & Test` e `Quality`, desde 2026-11-09).
 
 ## SonarCloud
 
-- Badge/link do SonarCloud: **preencher apos a publicacao**
-- Cobertura e Quality Gate reportados pelo SonarCloud: **preencher apos a publicacao** (o job `Quality` ainda nao rodou;
-  depende da organizacao, do projeto e do `SONAR_TOKEN`)
+- Badge/link do SonarCloud: **a preencher** (o projeto `willianrmattos_OficinaMecanica` ja e analisado no job `Quality`)
+- Cobertura e Quality Gate reportados pelo SonarCloud: **a preencher** com o valor da analise da `main`; o gate e `sonar.qualitygate.wait=true`
+  (o job `Quality` falha se o gate reprovar)

@@ -3,6 +3,10 @@
 ## Status
 Aceito
 
+**Atualizacao em 2026-11-10:** o workflow rodou no GitHub desde 2026-11-09 (PRs #7 a #10) e os jobs de `main` ficaram verdes; as frases abaixo sobre "ainda nao rodou" e
+"antes da publicacao" descrevem o momento da decisao. Continuam abertos: o ruleset exigir o `Quality` e a policy da APIM de `/health/ready` e `/metrics`, que em 2026-11-10
+ainda responde 200 pelo APIM.
+
 ## Contexto
 O OS Service (este repositorio, que nasceu como monolito) e o orquestrador da Saga e um dos tres servicos independentes do
 ecossistema: repositorio, banco (`OficinaMecanicaDb`), identidade OIDC e rota (`oficinaserver`) proprios. O pipeline herdado

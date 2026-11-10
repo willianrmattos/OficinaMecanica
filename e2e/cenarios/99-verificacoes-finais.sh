@@ -22,7 +22,9 @@ cenario() {
   done <<< "$filas_lidas" || reprovar "listagem de filas indisponivel ou incompleta: $filas_lidas"
   afirmar_numero "filas listadas pela API de management (as 3 de trabalho, mais as *_error que existirem)" ge 3 "$(printf '%s\n' "$filas_lidas" | grep -c '|')"
   afirmar_igual "soma das mensagens em filas *_error" "0" "$(somar_filas erro)"
-  afirmar_igual "filas de trabalho (os-saga, billing-comandos, execucao-comandos) drenadas" "0" "$(somar_filas trabalho)"
+  # Optei por esperar a drenagem em vez de amostrar um instante: logo depois do cenario 07 (broker derrubado e religado) ainda pode
+  # haver uma mensagem em transito para o consumidor, e isso nao e falha. Uma fila que NAO drena em 30 s continua reprovando.
+  esperar_valor "filas de trabalho (os-saga, billing-comandos, execucao-comandos) drenadas" 30 0 somar_filas trabalho
 
   passo "2. logs dos servicos: nenhum erro/Fault inesperado"
   local svc erros inesperados avisos linhas_log
