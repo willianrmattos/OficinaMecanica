@@ -1,7 +1,15 @@
 # RFC 0003: Divisao do ecossistema em multiplos repositorios
 
 ## Status
-Aceito
+Aceito, estendido pelo RFC 0005.
+
+## Atualizacao
+A divisao por responsabilidade continua valendo e foi estendida: alem de `OficinaMecanica.Seguranca`,
+`OficinaMecanica.Infra` e `OficinaMecanica.Banco`, o Billing (`OficinaMecanica.Billing`) e a Execucao
+(`OficinaMecanica.Execucao`) ganharam repositorio proprio, e `OficinaMecanica` virou o OS Service
+(RFC 0005). Os repositorios de aplicacao seguem sem dependencia de compilacao entre si; em runtime,
+alem de HTTP/JWKS, os tres servicos de negocio se conectam pelo RabbitMQ. O texto original abaixo
+foi preservado como registro do que se decidiu na epoca.
 
 ## Resumo
 `OficinaMecanica` comecou como um unico repositorio contendo a aplicacao,

@@ -1,51 +1,43 @@
 using MediatR;
 using OficinaMecanica.Application.DTOs;
-using OficinaMecanica.Domain.Exceptions;
+using OficinaMecanica.Application.Extensions;
+using OficinaMecanica.Application.Interfaces;
+using OficinaMecanica.Contracts.Events;
 using OficinaMecanica.Domain.Interfaces;
 
 namespace OficinaMecanica.Application.Commands.AprovarOrcamento;
 
-public class AprovarOrcamentoCommandHandler : IRequestHandler<AprovarOrcamentoCommand, OrdemDeServicoDto>
+public class AprovarOrcamentoCommandHandler : IRequestHandler<AprovarOrcamentoCommand, SolicitacaoAceitaDto>
 {
     private readonly IOrdemDeServicoRepository _ordemRepository;
-    private readonly IClienteRepository _clienteRepository;
-    private readonly IVeiculoRepository _veiculoRepository;
-    private readonly IPecaRepository _pecaRepository;
+    private readonly IIntegrationEventPublisher _publisher;
     private readonly IUnitOfWork _unitOfWork;
+    private readonly TimeProvider _timeProvider;
 
     public AprovarOrcamentoCommandHandler(
         IOrdemDeServicoRepository ordemRepository,
-        IClienteRepository clienteRepository,
-        IVeiculoRepository veiculoRepository,
-        IPecaRepository pecaRepository,
-        IUnitOfWork unitOfWork)
+        IIntegrationEventPublisher publisher,
+        IUnitOfWork unitOfWork,
+        TimeProvider timeProvider)
     {
         _ordemRepository = ordemRepository;
-        _clienteRepository = clienteRepository;
-        _veiculoRepository = veiculoRepository;
-        _pecaRepository = pecaRepository;
+        _publisher = publisher;
         _unitOfWork = unitOfWork;
+        _timeProvider = timeProvider;
     }
 
-    public async Task<OrdemDeServicoDto> Handle(AprovarOrcamentoCommand request, CancellationToken cancellationToken)
+    public async Task<SolicitacaoAceitaDto> Handle(AprovarOrcamentoCommand request, CancellationToken cancellationToken)
     {
-        var ordem = await _ordemRepository.ObterPorIdAsync(request.OrdemDeServicoId, cancellationToken)
-            ?? throw new DomainException("Ordem de serviço não encontrada.");
+        var ordem = await _ordemRepository.ObterObrigatoriaAsync(request.OrdemDeServicoId, cancellationToken);
+        ordem.ExigirAguardandoDecisaoDoCliente();
 
-        ordem.AprovarOrcamento();
-
-        foreach (var item in ordem.ItensPeca)
-        {
-            var peca = await _pecaRepository.ObterPorIdAsync(item.PecaId, cancellationToken)
-                ?? throw new DomainException($"Peça '{item.NomePeca}' não encontrada no sistema.");
-            peca.RemoverEstoque(item.Quantidade);
-        }
-
+        // A decisao so vira mensagem: quem muda o status e reserva o estoque e a saga, que serializa a
+        // aprovacao contra o prazo. O SaveChanges continua necessario porque e ele que grava o outbox.
+        await _publisher.PublishAsync(
+            new ClienteAprovouOrcamento(Guid.NewGuid(), ordem.Id, _timeProvider.GetUtcNow()),
+            cancellationToken);
         await _unitOfWork.SaveChangesAsync(cancellationToken);
 
-        var cliente = await _clienteRepository.ObterPorIdAsync(ordem.ClienteId, cancellationToken);
-        var veiculo = await _veiculoRepository.ObterPorIdAsync(ordem.VeiculoId, cancellationToken);
-
-        return OrdemDeServicoMapper.ToDto(ordem, cliente?.Nome, veiculo?.Placa.Valor);
+        return OrdemDeServicoMapper.ToSolicitacaoAceita(ordem);
     }
 }

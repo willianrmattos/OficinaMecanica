@@ -1,7 +1,19 @@
 # RFC 0002: Eventos de dominio in-process (MediatR) vs. broker externo
 
 ## Status
-Aceito
+Parcialmente substituido pelo RFC 0005: o despacho in-process dos Domain Events via MediatR continua
+valendo dentro de cada servico; a decisao de nao ter broker externo deixou de valer para a
+comunicacao entre servicos.
+
+## Atualizacao
+A condicao de revisao registrada na Decisao ("se/quando outro servico do ecossistema precisar reagir
+a eventos de Ordem de Servico") se cumpriu: Billing e Execucao reagem a OS e respondem a ela. A
+comunicacao entre servicos passou a usar RabbitMQ e MassTransit, com outbox/inbox transacionais
+(RFC 0005, ADR 0003 e ADR 0007); o outbox, que este RFC deixou de lado para o e-mail e as metricas,
+e usado para as mensagens de integracao. Os Domain Events seguem como descritos aqui: handlers do
+MediatR (`StatusOrdemAlteradoEventHandler` e `MetricasNegocioEventHandlers`) despachados pelo
+`AppDbContext` depois de persistir, sem passar pelo broker. O texto original abaixo foi preservado
+como registro do que se decidiu na epoca.
 
 ## Resumo
 Os Domain Events do monolito (ex.: `StatusOrdemAlteradoEvent`,

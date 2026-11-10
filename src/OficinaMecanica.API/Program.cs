@@ -1,9 +1,14 @@
 using OficinaMecanica.Application;
 using OficinaMecanica.Application.Observabilidade;
 using OficinaMecanica.API.BackgroundServices;
+using OficinaMecanica.API.Health;
 using OficinaMecanica.Infrastructure;
 using OficinaMecanica.Infrastructure.Data;
+using OficinaMecanica.Infrastructure.Execucao;
+using OficinaMecanica.Infrastructure.Messaging;
+using OficinaMecanica.Infrastructure.Saga;
 using OficinaMecanica.API.Middleware;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.AspNetCore.HttpOverrides;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.OpenApi.Models;
@@ -47,6 +52,8 @@ builder.Host.UseSerilog();
 // Services
 builder.Services.AddApplication();
 builder.Services.AddInfrastructure(builder.Configuration);
+builder.Services.AddMensageriaComSaga(builder.Configuration);
+builder.Services.AddClienteDaExecucao(builder.Configuration);
 
 if (!string.IsNullOrWhiteSpace(otelEndpoint))
 {
@@ -55,11 +62,13 @@ if (!string.IsNullOrWhiteSpace(otelEndpoint))
         .WithTracing(tracing => tracing
             .AddAspNetCoreInstrumentation()
             .AddSqlClientInstrumentation()
+            .AddSource("MassTransit")
             .AddOtlpExporter(otlp => otlp.Endpoint = new Uri(otelEndpoint)))
         .WithMetrics(metrics => metrics
             .AddAspNetCoreInstrumentation()
             .AddRuntimeInstrumentation()
             .AddMeter(MetricasNegocio.MeterName)
+            .AddMeter(MetricasDaSaga.MeterName)
             .AddOtlpExporter(otlp => otlp.Endpoint = new Uri(otelEndpoint)));
 
     builder.Services.AddHostedService<MetricasDeNegocioBackgroundService>();
@@ -84,6 +93,11 @@ builder.Services.AddSwaggerGen(c =>
     // operationId pra saber o que atualizar vs. apagar).
     c.CustomOperationIds(apiDesc =>
         $"{apiDesc.ActionDescriptor.RouteValues["controller"]}_{apiDesc.ActionDescriptor.RouteValues["action"]}");
+
+    // Descricoes e respostas em portugues vem dos comentarios XML dos controllers (gerados no build e copiados no publish).
+    var comentarios = Path.Combine(AppContext.BaseDirectory, "OficinaMecanica.API.xml");
+    if (File.Exists(comentarios))
+        c.IncludeXmlComments(comentarios);
 
     c.AddSecurityDefinition("Bearer", new OpenApiSecurityScheme
     {
@@ -139,8 +153,10 @@ app.Use((context, next) =>
 });
 
 // Middleware
-app.UseMiddleware<ExceptionHandlingMiddleware>();
+// UseHttpMetrics fica por fora do middleware de excecoes: ele le o status quando a resposta ja foi montada, entao o
+// 404/409/500 e o 499 mapeados ali aparecem nas metricas com o codigo real (por dentro, tudo contaria como 200).
 app.UseHttpMetrics();
+app.UseMiddleware<ExceptionHandlingMiddleware>();
 
 // Auto-migrate in development
 if (app.Environment.IsDevelopment())
@@ -180,7 +196,16 @@ app.UseAuthorization();
 
 app.MapControllers();
 app.MapMetrics();
-app.MapHealthChecks("/health");
+// /health so confirma que o processo esta de pe (probe de liveness: uma queda de dependencia nao pode fazer o
+// Kubernetes reiniciar o pod). /health/ready (tag "ready") cobre as dependencias: o SQL Server, sem o qual a API nao
+// aceita escrita, devolve 503 quando cai; o RabbitMQ (RabbitMqHealthCheck, conexao AMQP de verdade) devolve Degraded,
+// que continua 200 porque o outbox segura as mensagens ate o broker voltar. O alerta do broker fica por metrica.
+app.MapHealthChecks("/health", new HealthCheckOptions { Predicate = check => !check.Tags.Contains("ready") });
+app.MapHealthChecks("/health/ready", new HealthCheckOptions
+{
+    Predicate = check => check.Tags.Contains("ready"),
+    ResponseWriter = ProntidaoResponseWriter.EscreverAsync
+});
 
 Log.Information("OficinaMecanica API iniciada com sucesso.");
 

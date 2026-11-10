@@ -45,6 +45,54 @@ public class StatusOrdemAlteradoEventHandlerTests
             Times.Once());
     }
 
+    [Theory]
+    [InlineData(StatusOrdemDeServico.AguardandoPagamento, "Aguardando pagamento")]
+    [InlineData(StatusOrdemDeServico.Cancelada, "Cancelada")]
+    [InlineData(StatusOrdemDeServico.EmExecucao, "Em execução")]
+    [InlineData(StatusOrdemDeServico.OrcamentoRecusado, "Orçamento recusado")]
+    public async Task Handle_StatusDoFluxoComPagamento_DeveDescreverOStatusNoCorpoDoEmail(StatusOrdemDeServico status, string descricaoEsperada)
+    {
+        var ordem = new OrdemDeServicoBuilder().AguardandoAprovacao();
+        var cliente = new ClienteBuilder().ComEmail("cliente@teste.com").Build();
+        _ordemRepositoryMock
+            .Setup(r => r.ObterPorIdAsync(ordem.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ordem);
+        _clienteRepositoryMock
+            .Setup(r => r.ObterPorIdAsync(ordem.ClienteId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cliente);
+        string? corpo = null;
+        _emailServiceMock
+            .Setup(e => e.EnviarAsync("cliente@teste.com", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((_, _, c, _) => corpo = c)
+            .Returns(Task.CompletedTask);
+
+        await _handler.Handle(new StatusOrdemAlteradoEvent(ordem.Id, ordem.Numero, status), CancellationToken.None);
+
+        corpo.Should().Contain($"status atualizado para: {descricaoEsperada}");
+    }
+
+    [Fact]
+    public async Task Handle_AguardandoPagamento_DeveAvisarQueOLinkChegaraEmSeguida()
+    {
+        var ordem = new OrdemDeServicoBuilder().AguardandoPagamento();
+        var cliente = new ClienteBuilder().ComEmail("cliente@teste.com").Build();
+        _ordemRepositoryMock
+            .Setup(r => r.ObterPorIdAsync(ordem.Id, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(ordem);
+        _clienteRepositoryMock
+            .Setup(r => r.ObterPorIdAsync(ordem.ClienteId, It.IsAny<CancellationToken>()))
+            .ReturnsAsync(cliente);
+        string? corpo = null;
+        _emailServiceMock
+            .Setup(e => e.EnviarAsync("cliente@teste.com", It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .Callback<string, string, string, CancellationToken>((_, _, c, _) => corpo = c)
+            .Returns(Task.CompletedTask);
+
+        await _handler.Handle(new StatusOrdemAlteradoEvent(ordem.Id, ordem.Numero, StatusOrdemDeServico.AguardandoPagamento), CancellationToken.None);
+
+        corpo.Should().Contain("o link de pagamento chegará em seguida");
+    }
+
     [Fact]
     public async Task Handle_ClienteSemEmail_NaoDeveEnviarEmail()
     {
